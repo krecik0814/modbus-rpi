@@ -1,0 +1,256 @@
+{
+  "byte_order": "big_endian",
+  "description": "Auto-wygenerowany ze skanera",
+  "manufacturer": "Orno",
+  "model": "H57",
+  "name": "modnustest",
+  "phases": 3,
+  "register_type": "input",
+  "registers": {
+    "current_15": {
+      "address": 30,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x1E)",
+      "unit": "A"
+    },
+    "current_16": {
+      "address": 32,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x20)",
+      "unit": "A"
+    },
+    "current_17": {
+      "address": 34,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x22)",
+      "unit": "A"
+    },
+    "current_18": {
+      "address": 36,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x24)",
+      "unit": "A"
+    },
+    "current_28": {
+      "address": 56,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x38)",
+      "unit": "A"
+    },
+    "current_29": {
+      "address": 58,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x3A)",
+      "unit": "A"
+    },
+    "current_3": {
+      "address": 6,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x6)",
+      "unit": "A"
+    },
+    "current_30": {
+      "address": 60,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x3C)",
+      "unit": "A"
+    },
+    "current_31": {
+      "address": 62,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x3E)",
+      "unit": "A"
+    },
+    "current_32": {
+      "address": 64,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x40)",
+      "unit": "A"
+    },
+    "current_33": {
+      "address": 66,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x42)",
+      "unit": "A"
+    },
+    "current_34": {
+      "address": 68,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x44)",
+      "unit": "A"
+    },
+    "current_4": {
+      "address": 8,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0x8)",
+      "unit": "A"
+    },
+    "current_5": {
+      "address": 10,
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd (0xA)",
+      "unit": "A"
+    },
+    "line_volt_14": {
+      "address": 28,
+      "decimals": 1,
+      "group": "line_volt",
+      "label": "Nap. międzyfaz. (0x1C)",
+      "unit": "V"
+    },
+    "line_volt_25": {
+      "address": 50,
+      "decimals": 1,
+      "group": "line_volt",
+      "label": "Nap. międzyfaz. (0x32)",
+      "unit": "V"
+    },
+    "line_volt_26": {
+      "address": 52,
+      "decimals": 1,
+      "group": "line_volt",
+      "label": "Nap. międzyfaz. (0x34)",
+      "unit": "V"
+    },
+    "line_volt_27": {
+      "address": 54,
+      "decimals": 1,
+      "group": "line_volt",
+      "label": "Nap. międzyfaz. (0x36)",
+      "unit": "V"
+    },
+    "power_10": {
+      "address": 20,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x14)",
+      "unit": "W"
+    },
+    "power_11": {
+      "address": 22,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x16)",
+      "unit": "W"
+    },
+    "power_12": {
+      "address": 24,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x18)",
+      "unit": "W"
+    },
+    "power_13": {
+      "address": 26,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x1A)",
+      "unit": "W"
+    },
+    "power_19": {
+      "address": 38,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x26)",
+      "unit": "W"
+    },
+    "power_20": {
+      "address": 40,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x28)",
+      "unit": "W"
+    },
+    "power_21": {
+      "address": 42,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x2A)",
+      "unit": "W"
+    },
+    "power_22": {
+      "address": 44,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x2C)",
+      "unit": "W"
+    },
+    "power_24": {
+      "address": 48,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x30)",
+      "unit": "W"
+    },
+    "power_6": {
+      "address": 12,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0xC)",
+      "unit": "W"
+    },
+    "power_7": {
+      "address": 14,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0xE)",
+      "unit": "W"
+    },
+    "power_8": {
+      "address": 16,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x10)",
+      "unit": "W"
+    },
+    "power_9": {
+      "address": 18,
+      "decimals": 1,
+      "group": "power",
+      "label": "Moc (0x12)",
+      "unit": "W"
+    },
+    "voltage_0": {
+      "address": 0,
+      "decimals": 1,
+      "group": "voltage",
+      "label": "Napięcie (0x0)",
+      "unit": "V"
+    },
+    "voltage_1": {
+      "address": 2,
+      "decimals": 1,
+      "group": "voltage",
+      "label": "Napięcie (0x2)",
+      "unit": "V"
+    },
+    "voltage_2": {
+      "address": 4,
+      "decimals": 1,
+      "group": "voltage",
+      "label": "Napięcie (0x4)",
+      "unit": "V"
+    },
+    "voltage_23": {
+      "address": 46,
+      "decimals": 1,
+      "group": "voltage",
+      "label": "Napięcie (0x2E)",
+      "unit": "V"
+    }
+  }
+}

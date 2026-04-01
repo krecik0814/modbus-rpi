@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Modbus Energy Meter Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#06080d;--bg2:#0c1017;--bg3:#131925;--bg4:#1a2235;
+  --border:#1e293b;--border2:#2a3a52;
+  --text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--white:#f8fafc;
+  --blue:#3b82f6;--green:#22c55e;--red:#ef4444;--yellow:#eab308;
+  --purple:#a855f7;--cyan:#06b6d4;--orange:#f97316;
+  --phase1:#ef4444;--phase2:#eab308;--phase3:#3b82f6;
+  --font:'Segoe UI','SF Pro Display',-apple-system,sans-serif;
+  --mono:'Cascadia Code','SF Mono','Consolas','Fira Code',monospace;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;display:flex}
+.sidebar{width:220px;background:var(--bg2);border-right:1px solid var(--border);display:flex;flex-direction:column;position:fixed;height:100vh;z-index:10}
+.sidebar-logo{padding:20px;border-bottom:1px solid var(--border);font-family:var(--mono)}
+.sidebar-logo h1{font-size:14px;font-weight:600;color:var(--white);letter-spacing:.5px}
+.sidebar-logo span{font-size:11px;color:var(--text3);display:block;margin-top:4px}
+.sidebar-nav{flex:1;padding:12px 8px;overflow-y:auto}
+.nav-section{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1.5px;padding:16px 12px 6px;font-weight:600}
+.nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);transition:all .15s}
+.nav-item:hover{background:var(--bg3);color:var(--text)}
+.nav-item.active{background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;font-weight:500}
+.nav-item svg{width:18px;height:18px;opacity:.7;flex-shrink:0}
+.nav-item.active svg{opacity:1}
+.sidebar-footer{padding:12px;border-top:1px solid var(--border)}
+.conn-status{display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:var(--bg3);font-size:11px;font-family:var(--mono)}
+.conn-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.conn-dot.on{background:var(--green);box-shadow:0 0 8px #22c55e55}
+.conn-dot.off{background:var(--red);box-shadow:0 0 8px #ef444455}
+.main{margin-left:220px;flex:1;min-height:100vh}
+.page-header{padding:20px 28px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+.page-header h2{font-size:18px;font-weight:600;color:var(--white)}
+.page-content{padding:24px 28px}
+.view{display:none}.view.active{display:block}
+.conn-bar{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+input[type=text],input[type=number],select{background:var(--bg3);border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:6px;font-size:13px;font-family:var(--mono);outline:none;transition:border .15s}
+input:focus,select:focus{border-color:var(--blue)}
+input[type=number]{width:80px}
+select{min-width:160px;cursor:pointer}
+.btn{padding:8px 16px;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;font-family:var(--font);display:inline-flex;align-items:center;gap:6px}
+.btn-primary{background:var(--blue);color:#fff}.btn-primary:hover{background:#2563eb}
+.btn-success{background:var(--green);color:#fff}.btn-success:hover{background:#16a34a}
+.btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#dc2626}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}.btn-ghost:hover{background:var(--bg3);color:var(--text)}
+.btn-warn{background:var(--yellow);color:#000}.btn-warn:hover{background:#ca8a04}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn-sm{padding:5px 10px;font-size:12px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.card-title{font-size:13px;font-weight:600;color:var(--white);text-transform:uppercase;letter-spacing:.5px}
+.grid{display:grid;gap:10px}
+.grid-3{grid-template-columns:repeat(3,1fr)}.grid-4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:1200px){.grid-4{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:900px){.grid-3,.grid-4{grid-template-columns:repeat(2,1fr)}}
+.val-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px;position:relative;overflow:hidden;transition:border-color .2s}
+.val-card:hover{border-color:var(--border2)}
+.val-card .lbl{font-size:11px;color:var(--text3);margin-bottom:6px;font-weight:500}
+.val-card .val{font-size:22px;font-weight:700;font-family:var(--mono);color:var(--white);line-height:1.2}
+.val-card .unt{font-size:12px;color:var(--text3);font-weight:400;margin-left:4px}
+.val-card .acc{position:absolute;top:0;left:0;width:3px;height:100%;border-radius:3px 0 0 3px}
+.val-card .mini-chart{height:32px;margin-top:6px;opacity:.7}
+.scan-table{width:100%;border-collapse:collapse;font-size:13px;font-family:var(--mono)}
+.scan-table th{text-align:left;padding:10px 12px;background:var(--bg3);color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:1}
+.scan-table td{padding:8px 12px;border-bottom:1px solid var(--border)}
+.scan-table tr:hover td{background:var(--bg3)}
+.scan-table .addr{color:var(--cyan);font-weight:600}
+.scan-table .raw{color:var(--text3)}
+.scan-table .v{color:var(--white);font-weight:500}
+.guess{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:500}
+.g-voltage,.g-line_volt{background:#22c55e22;color:var(--green)}
+.g-current{background:#eab30822;color:var(--yellow)}.g-power{background:#f9731622;color:var(--orange)}
+.g-frequency{background:#06b6d422;color:var(--cyan)}.g-pf{background:#a855f722;color:var(--purple)}
+.g-energy{background:#3b82f622;color:var(--blue)}.g-thd{background:#ef444422;color:var(--red)}
+.scan-wrap{max-height:520px;overflow-y:auto;border:1px solid var(--border);border-radius:8px}
+.preset-item{display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .15s;margin-bottom:8px}
+.preset-item:hover{border-color:var(--blue);background:var(--bg4)}
+.preset-item.selected{border-color:var(--blue);background:#3b82f611}
+.preset-item h4{font-size:14px;color:var(--white);font-weight:500}
+.preset-item p{font-size:12px;color:var(--text3);margin-top:2px}
+.json-editor{width:100%;min-height:400px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:16px;color:var(--green);font-family:var(--mono);font-size:13px;line-height:1.6;resize:vertical;outline:none;tab-size:2}
+.json-editor:focus{border-color:var(--blue)}
+.group-header{font-size:11px;font-weight:600;color:var(--cyan);text-transform:uppercase;letter-spacing:.8px;padding:14px 0 8px;border-bottom:1px solid var(--border);margin-bottom:10px;margin-top:8px}
+.group-header:first-child{margin-top:0}
+.spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--blue);border-radius:50%;animation:spin .6s linear infinite;display:inline-block}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:20px;right:20px;padding:12px 20px;border-radius:8px;font-size:13px;font-weight:500;z-index:999;animation:fadeIn .3s}
+.toast-ok{background:var(--green);color:#fff}.toast-err{background:var(--red);color:#fff}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.empty{text-align:center;padding:60px 20px;color:var(--text3)}.empty p{font-size:14px;margin-top:8px}
+/* Mode toggle */
+.mode-toggle{display:flex;background:var(--bg3);border-radius:6px;border:1px solid var(--border);overflow:hidden}
+.mode-toggle button{padding:6px 14px;font-size:12px;border:none;background:none;color:var(--text3);cursor:pointer;font-family:var(--font);transition:all .15s}
+.mode-toggle button.active{background:var(--blue);color:#fff}
+/* Chart containers */
+.chart-group{margin-bottom:20px}
+.chart-group canvas{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:8px}
+/* Live scanner pulse */
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--red);margin-right:6px}
+.live-dot.recording{background:var(--red);animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* Help */
+.help-section{margin-bottom:24px;max-width:800px}
+.help-section h3{font-size:15px;font-weight:600;color:var(--white);margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.help-section p,.help-section li{font-size:13px;color:var(--text2);line-height:1.8}
+.help-section ul{padding-left:20px;margin:6px 0}
+.help-section code{background:var(--bg3);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:12px;color:var(--cyan)}
+.help-cmd{background:var(--bg3);border-radius:8px;padding:14px;font-family:var(--mono);font-size:12px;color:var(--cyan);line-height:1.8;margin:8px 0;border:1px solid var(--border)}
+.help-cmd .cmt{color:var(--text3)}
+.help-table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+.help-table th{text-align:left;padding:8px 12px;background:var(--bg3);color:var(--text3);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--border)}
+.help-table td{padding:8px 12px;border-bottom:1px solid var(--border);color:var(--text2)}
+.help-table td:first-child{color:var(--white);font-weight:500;font-family:var(--mono)}
+/* Chart modal */
+.chart-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:100;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.chart-modal-overlay.open{display:flex}
+.chart-modal{background:var(--bg2);border:1px solid var(--border);border-radius:14px;width:94%;max-width:1400px;height:85vh;overflow:hidden;animation:modalIn .2s ease;display:flex;flex-direction:column}
+@keyframes modalIn{from{opacity:0;transform:scale(.95)}to{opacity:1;transform:scale(1)}}
+.chart-modal-head{display:flex;justify-content:space-between;align-items:flex-start;padding:24px 24px 16px}
+.chart-modal-head .info h3{font-size:20px;color:var(--white);font-weight:600}
+.chart-modal-head .info p{font-size:13px;color:var(--text3);margin-top:4px}
+.chart-modal-head .close-btn{width:36px;height:36px;border-radius:8px;border:1px solid var(--border);background:var(--bg3);color:var(--text3);font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.chart-modal-head .close-btn:hover{background:var(--bg4);color:var(--white)}
+.chart-modal-stats{display:flex;gap:24px;padding:0 24px 20px;flex-wrap:wrap}
+.chart-modal-stats .stat{display:flex;flex-direction:column;gap:3px}
+.chart-modal-stats .stat-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.chart-modal-stats .stat-val{font-size:22px;font-weight:700;font-family:var(--mono);color:var(--white)}
+.chart-modal-canvas{padding:0 24px 24px;flex:1;min-height:0}
+.chart-modal-canvas canvas{width:100%;height:100%;display:block;background:var(--bg3);border-radius:10px}
+.chart-card-click{cursor:pointer;transition:border-color .15s,transform .1s}
+.chart-card-click:hover{border-color:var(--border2);transform:translateY(-1px)}
+</style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo"><h1>MODBUS DASH</h1><span>Energy Meter Monitor v2</span></div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">Narzędzia</div>
+    <div class="nav-item active" onclick="showView('dashboard')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      Dashboard</div>
+    <div class="nav-item" onclick="showView('scanner')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      Skaner rejestrów</div>
+    <div class="nav-item" onclick="showView('presets')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14,2 14,8 20,8"/></svg>
+      Presety</div>
+    <div class="nav-section">System</div>
+    <div class="nav-item" onclick="showView('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Ustawienia</div>
+    <div class="nav-item" onclick="showView('help')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Pomoc</div>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="conn-status">
+      <div class="conn-dot off" id="conn-dot"></div>
+      <span id="conn-text" style="color:var(--text3)">Niepołączono</span>
+    </div>
+  </div>
+</aside>
+
+<main class="main">
+
+  <!-- ═══ DASHBOARD ═══ -->
+  <div class="view active" id="view-dashboard">
+    <div class="page-header">
+      <h2>Dashboard</h2>
+      <div style="display:flex;gap:10px;align-items:center">
+        <select id="dash-preset" onchange="startLive()"><option value="">— Wybierz preset —</option></select>
+        <div class="mode-toggle">
+          <button class="active" onclick="setDashMode('cards',this)">Karty</button>
+          <button onclick="setDashMode('charts',this)">Wykresy</button>
+        </div>
+        <span id="dash-time" style="font-family:var(--mono);font-size:12px;color:var(--text3)"></span>
+      </div>
+    </div>
+    <div class="page-content" id="dash-content">
+      <div class="empty"><p>Wybierz preset aby rozpocząć monitorowanie</p></div>
+    </div>
+  </div>
+
+  <!-- ═══ SCANNER ═══ -->
+  <div class="view" id="view-scanner">
+    <div class="page-header"><h2>Skaner rejestrów</h2></div>
+    <div class="page-content">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Parametry skanowania</span></div>
+        <div class="conn-bar">
+          <div class="field"><label>Typ rejestrów</label>
+            <select id="scan-regtype"><option value="input">Input Registers (FC=04)</option><option value="holding">Holding Registers (FC=03)</option></select></div>
+          <div class="field"><label>Od adresu</label><input type="number" id="scan-start" value="0"></div>
+          <div class="field"><label>Do adresu</label><input type="number" id="scan-end" value="100"></div>
+          <div class="field"><label>&nbsp;</label><button class="btn btn-primary" id="scan-btn" onclick="runScan()">Skanuj</button></div>
+          <div class="field"><label>&nbsp;</label><button class="btn btn-warn btn-sm" id="scan-live-btn" onclick="toggleLiveScan()" disabled>Live</button></div>
+          <div class="field"><label>&nbsp;</label><button class="btn btn-ghost btn-sm" id="scan-csv" onclick="exportScanCSV()" disabled>Eksport CSV</button></div>
+          <div class="field"><label>&nbsp;</label><button class="btn btn-success btn-sm" id="scan-save" onclick="scanToPreset()" disabled>Zapisz preset</button></div>
+        </div>
+      </div>
+      <div id="scan-status" style="display:none;padding:8px 14px;background:#ef444418;border:1px solid #ef444433;border-radius:8px;margin-bottom:12px;font-size:13px;align-items:center">
+      </div>
+      <div id="scan-results"><div class="empty"><p>Uruchom skan aby zobaczyć rejestry</p></div></div>
+    </div>
+  </div>
+
+  <!-- ═══ PRESETS ═══ -->
+  <div class="view" id="view-presets">
+    <div class="page-header">
+      <h2>Zarządzanie presetami</h2>
+      <button class="btn btn-primary" onclick="newPreset()">+ Nowy preset</button></div>
+    <div class="page-content">
+      <div style="display:grid;grid-template-columns:320px 1fr;gap:20px;align-items:start">
+        <div id="preset-list"></div>
+        <div>
+          <div class="card" id="editor-card" style="display:none">
+            <div class="card-header">
+              <span class="card-title" id="editor-title">Edytor</span>
+              <div style="display:flex;gap:6px">
+                <button class="btn btn-success btn-sm" onclick="saveEditor()">Zapisz</button>
+                <button class="btn btn-ghost btn-sm" onclick="closeEditor()">Anuluj</button></div></div>
+            <textarea class="json-editor" id="preset-json" spellcheck="false"></textarea>
+          </div></div></div></div>
+  </div>
+
+  <!-- ═══ SETTINGS ═══ -->
+  <div class="view" id="view-settings">
+    <div class="page-header"><h2>Ustawienia</h2></div>
+    <div class="page-content">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:800px">
+        <div class="card">
+          <div class="card-header"><span class="card-title">Połączenie Modbus TCP</span></div>
+          <p style="font-size:12px;color:var(--text3);margin-bottom:14px">Tryb desktopowy — symulator lub bramka TCP.</p>
+          <div class="field" style="margin-bottom:10px"><label>Host</label><input type="text" id="conn-host" value="127.0.0.1" style="width:100%"></div>
+          <div class="field" style="margin-bottom:10px"><label>Port TCP</label><input type="number" id="conn-port" value="5020" style="width:100%"></div>
+          <div class="field" style="margin-bottom:14px">
+            <label>Unit ID (adres slave)</label>
+            <input type="number" id="conn-unit" value="1" style="width:100%" min="1" max="247">
+            <span style="font-size:11px;color:var(--text3);margin-top:4px;display:block">Adres urządzenia na magistrali (1–247)</span></div>
+          <button class="btn btn-primary" style="width:100%" onclick="testConn()">Test połączenia</button></div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Raspberry Pi / RS-485</span></div>
+          <p style="font-size:12px;color:var(--text3);margin-bottom:14px">Konfiguracja przez flagi CLI przy starcie.</p>
+          <div class="help-cmd">
+            <span class="cmt"># Waveshare RS485 HAT:</span><br>
+            python app.py --serial /dev/ttyS0 --baudrate 9600<br><br>
+            <span class="cmt"># USB-to-RS485 adapter (Windows):</span><br>
+            python app.py --serial COM3 --baudrate 9600</div>
+          <div style="margin-top:14px;padding:12px;background:#3b82f611;border:1px solid #3b82f633;border-radius:8px">
+            <div style="font-size:12px;color:var(--blue);font-weight:600;margin-bottom:4px">Aktualny tryb</div>
+            <div style="font-size:13px;color:var(--text)" id="mode-info">Ładowanie...</div></div></div>
+      </div></div>
+  </div>
+
+  <!-- ═══ HELP ═══ -->
+  <div class="view" id="view-help">
+    <div class="page-header"><h2>Pomoc</h2></div>
+    <div class="page-content">
+
+      <div class="help-section">
+        <h3>Szybki start</h3>
+        <ul>
+          <li>Uruchom <code>python app.py</code> — startuje symulator i dashboard na <code>http://localhost:5000</code></li>
+          <li>Otwórz przeglądarkę, przejdź do zakładki <strong>Skaner rejestrów</strong></li>
+          <li>Kliknij <strong>Skanuj</strong> — zobaczysz dump pamięci urządzenia z auto-identyfikacją wartości</li>
+          <li>Kliknij <strong>Zapisz preset</strong> — mapowanie rejestrów zostanie zapisane</li>
+          <li>Przejdź do <strong>Dashboard</strong>, wybierz preset — live monitoring gotowy</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>Czym jest Modbus?</h3>
+        <p>Modbus to prosty protokół komunikacyjny używany w automatyce i energetyce. Urządzenie (np. licznik energii) udostępnia tablicę rejestrów 16-bitowych — każdy rejestr to komórka pamięci z numerem (adresem). Odpytujesz urządzenie: "daj mi rejestry od 0 do 10" i dostajesz surowe liczby. Bez nazw, bez typów — musisz wiedzieć (lub wydedukować) co jest pod jakim adresem.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>Parametry połączenia</h3>
+        <table class="help-table">
+          <tr><th>Parametr</th><th>Opis</th><th>Typowa wartość</th></tr>
+          <tr><td>Host</td><td>Adres IP urządzenia Modbus TCP lub bramki</td><td>127.0.0.1 (symulator)</td></tr>
+          <tr><td>Port</td><td>Port TCP serwera Modbus</td><td>502 (standard) / 5020 (symulator)</td></tr>
+          <tr><td>Unit ID</td><td>Adres slave urządzenia na magistrali RS-485. Każde urządzenie ma unikalny numer 1–247. Jeśli masz jeden licznik — prawie na pewno 1.</td><td>1</td></tr>
+          <tr><td>Baudrate</td><td>Prędkość transmisji szeregowej (tylko RS-485)</td><td>9600</td></tr>
+          <tr><td>Parity</td><td>Bit parzystości: None, Even, Odd</td><td>N (None)</td></tr>
+          <tr><td>Byte order</td><td>Kolejność bajtów w floatach: big-endian (AB CD), word-swap (CD AB), little-endian (DC BA)</td><td>big_endian</td></tr>
+        </table>
+      </div>
+
+      <div class="help-section">
+        <h3>Typy rejestrów Modbus</h3>
+        <table class="help-table">
+          <tr><th>Typ</th><th>Function code</th><th>Opis</th></tr>
+          <tr><td>Input Registers</td><td>FC=04</td><td>Rejestry tylko do odczytu — tu liczniki trzymają pomiary (napięcie, prąd, moc)</td></tr>
+          <tr><td>Holding Registers</td><td>FC=03</td><td>Rejestry do odczytu i zapisu — konfiguracja urządzenia (baudrate, adres, parametry)</td></tr>
+          <tr><td>Coils</td><td>FC=01</td><td>Bity do zapisu — sterowanie (włącz/wyłącz przekaźnik)</td></tr>
+          <tr><td>Discrete Inputs</td><td>FC=02</td><td>Bity tylko do odczytu — stany binarne (alarm, status)</td></tr>
+        </table>
+      </div>
+
+      <div class="help-section">
+        <h3>Skaner rejestrów — jak czytać wyniki</h3>
+        <p>Skaner odpytuje zakres adresów i dekoduje każdą parę rejestrów (2 × 16-bit = float32) w trzech wariantach kolejności bajtów. Kolorowe znaczniki oznaczają automatycznie rozpoznane wartości:</p>
+        <ul>
+          <li><span class="guess g-voltage" style="margin:0 4px">Napięcie</span> — wartość w zakresie 200–260 (typowe 230V)</li>
+          <li><span class="guess g-current" style="margin:0 4px">Prąd</span> — wartość 0.01–100 A</li>
+          <li><span class="guess g-power" style="margin:0 4px">Moc</span> — wartość 100–50000 W</li>
+          <li><span class="guess g-frequency" style="margin:0 4px">Częstotliwość</span> — wartość 49–51.5 Hz</li>
+          <li><span class="guess g-pf" style="margin:0 4px">cos φ</span> — wartość 0.5–1.0</li>
+          <li><span class="guess g-energy" style="margin:0 4px">Energia</span> — wartość > 100 (kWh)</li>
+        </ul>
+        <p>Wyszarzone wiersze to rejestry z wartościami które nie pasują do znanych wzorców — mogą być puste, nieużywane, lub zawierać dane w innym formacie (int16, uint32).</p>
+      </div>
+
+      <div class="help-section">
+        <h3>Tryb Live w skanerze</h3>
+        <p>Po pierwszym skanie kliknij <strong>Live</strong> — skaner będzie automatycznie odpytywał rejestry co sekundę. Pozwala to obserwować zmiany wartości w czasie rzeczywistym — np. włącz czajnik i patrz który rejestr skoczył o ~2000W. Przydatne do identyfikacji nieznanych rejestrów.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>Presety</h3>
+        <p>Preset to plik JSON opisujący mapę rejestrów konkretnego modelu licznika. Zawiera adres każdego rejestru, jego nazwę, jednostkę i grupę. Raz stworzony preset działa dla każdego egzemplarza tego samego modelu — zmieniasz tylko Unit ID.</p>
+        <p>Presety można tworzyć ręcznie (edytor JSON) lub automatycznie ze skanera (przycisk "Zapisz preset").</p>
+      </div>
+
+      <div class="help-section">
+        <h3>Dashboard — tryb wykresów</h3>
+        <p>Przełącznik <strong>Karty / Wykresy</strong> zmienia widok. Tryb wykresów pokazuje wykresy liniowe z historią ostatnich 60 odczytów (1 minuty) dla każdej grupy parametrów. Wartości liczbowe wyświetlane są jednocześnie obok wykresów.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>Podłączenie na Raspberry Pi</h3>
+        <div class="help-cmd">
+          <span class="cmt"># 1. Włącz UART:</span><br>
+          sudo raspi-config<br>
+          <span class="cmt"># → Interface Options → Serial Port → Shell: NO, Hardware: YES → Reboot</span><br><br>
+          <span class="cmt"># 2. Zainstaluj zależności:</span><br>
+          pip install flask pymodbus pyserial<br><br>
+          <span class="cmt"># 3. Uruchom z HATem RS-485:</span><br>
+          python app.py --serial /dev/ttyS0 --baudrate 9600<br><br>
+          <span class="cmt"># 4. Otwórz w przeglądarce:</span><br>
+          http://&lt;ip-rpi&gt;:5000
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Argumenty uruchomienia (CLI)</h3>
+        <table class="help-table">
+          <tr><th>Flaga</th><th>Opis</th><th>Domyślnie</th></tr>
+          <tr><td>--port</td><td>Port HTTP dashboardu webowego</td><td>5000</td></tr>
+          <tr><td>--modbus-port</td><td>Port wbudowanego symulatora Modbus TCP</td><td>5020</td></tr>
+          <tr><td>--no-sim</td><td>Nie uruchamiaj symulatora (gdy łączysz się z prawdziwym urządzeniem po TCP)</td><td>wyłączone</td></tr>
+          <tr><td>--serial</td><td>Port szeregowy RS-485 (np. <code>/dev/ttyS0</code>, <code>COM3</code>). Włączenie tej flagi automatycznie wyłącza symulator</td><td>brak</td></tr>
+          <tr><td>--baudrate</td><td>Prędkość transmisji szeregowej</td><td>9600</td></tr>
+          <tr><td>--parity</td><td>Bit parzystości: <code>N</code> (None), <code>E</code> (Even), <code>O</code> (Odd)</td><td>N</td></tr>
+          <tr><td>--stopbits</td><td>Bity stopu: 1 lub 2</td><td>1</td></tr>
+          <tr><td>--debug</td><td>Tryb debug Flask (hot-reload, verbose logging)</td><td>wyłączone</td></tr>
+        </table>
+        <p style="margin-top:8px">Przykłady:</p>
+        <div class="help-cmd">
+          <span class="cmt"># Desktop z symulatorem (domyślne):</span><br>
+          python app.py<br><br>
+          <span class="cmt"># RPi + Waveshare RS485/CAN HAT:</span><br>
+          python app.py --serial /dev/ttyS0 --baudrate 9600<br><br>
+          <span class="cmt"># RPi + licznik z parity Even:</span><br>
+          python app.py --serial /dev/ttyS0 --baudrate 9600 --parity E<br><br>
+          <span class="cmt"># USB-to-RS485 adapter na Windows:</span><br>
+          python app.py --serial COM3 --baudrate 9600<br><br>
+          <span class="cmt"># Połączenie z bramką Modbus TCP (bez symulatora):</span><br>
+          python app.py --no-sim<br><br>
+          <span class="cmt"># Dashboard na innym porcie:</span><br>
+          python app.py --port 8080
+        </div>
+      </div>
+
+      <div class="help-section">
+        <h3>Konfiguracja popularnych liczników</h3>
+        <p>Domyślne ustawienia fabryczne najpopularniejszych modeli liczników Modbus RTU. Parametry mogą się różnić jeśli zostały zmienione na urządzeniu.</p>
+        <table class="help-table">
+          <tr><th>Model</th><th>Fazy</th><th>Baudrate</th><th>Parity</th><th>Adres</th><th>Rejestry</th><th>Byte order</th></tr>
+          <tr><td>Eastron SDM120</td><td>1F</td><td>2400</td><td>N</td><td>1</td><td>Input (FC=04)</td><td>Big-endian</td></tr>
+          <tr><td>Eastron SDM230</td><td>1F</td><td>2400</td><td>N</td><td>1</td><td>Input (FC=04)</td><td>Big-endian</td></tr>
+          <tr><td>Eastron SDM630</td><td>3F</td><td>2400</td><td>N</td><td>1</td><td>Input (FC=04)</td><td>Big-endian</td></tr>
+          <tr><td>Orno OR-WE-504</td><td>1F</td><td>9600</td><td>E</td><td>1</td><td>Input (FC=04)</td><td>Big-endian</td></tr>
+          <tr><td>Orno OR-WE-514</td><td>3F</td><td>9600</td><td>E</td><td>1</td><td>Input (FC=04)</td><td>Big-endian</td></tr>
+          <tr><td>Orno OR-WE-517</td><td>3F</td><td>9600</td><td>E</td><td>1</td><td>Input (FC=04)</td><td>Big-endian</td></tr>
+          <tr><td>Finder 7E.78</td><td>3F</td><td>9600</td><td>N</td><td>1</td><td>Input (FC=04)</td><td>Big-endian</td></tr>
+          <tr><td>Carlo Gavazzi EM24</td><td>3F</td><td>9600</td><td>N</td><td>1</td><td>Input (FC=04)</td><td>Word-swap</td></tr>
+          <tr><td>Schneider iEM3155</td><td>3F</td><td>19200</td><td>E</td><td>1</td><td>Holding (FC=03)</td><td>Big-endian</td></tr>
+          <tr><td>Janitza UMG 96RM</td><td>3F</td><td>9600</td><td>N</td><td>1</td><td>Holding (FC=03)</td><td>Big-endian</td></tr>
+        </table>
+        <p style="margin-top:8px;color:var(--text3);font-size:12px">Uwaga: Carlo Gavazzi używa word-swap (CD AB) zamiast standardowego big-endian (AB CD). Jeśli skaner pokazuje bezsensowne wartości, zmień <code>byte_order</code> w presecie na <code>"word_swap"</code>.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>Jak znaleźć parametry nieznanego licznika</h3>
+        <ul>
+          <li>Sprawdź naklejkę na obudowie licznika — często podaje adres, baudrate i parity</li>
+          <li>Sprawdź instrukcję producenta (PDF) — szukaj "Modbus Register Map" lub "Communication Parameters"</li>
+          <li>Jeśli nie masz instrukcji, zacznij od: baudrate <code>9600</code>, parity <code>N</code>, adres <code>1</code></li>
+          <li>Jeśli skaner zwraca same zera — spróbuj baudrate <code>2400</code> (Eastron) lub parity <code>E</code> (Orno)</li>
+          <li>Jeśli wartości wyglądają bezsensownie (np. 1.7e-38 zamiast 230) — zmień byte order na <code>word_swap</code></li>
+          <li>Użyj trybu Live w skanerze — włącz/wyłącz obciążenie i patrz które rejestry reagują</li>
+          <li>Nie każdy rejestr to float32 — niektóre mogą być uint16 lub uint32 (energia, status). Te będą wyglądać dziwnie w dekodowaniu float</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>Fizyczne podłączenie RS-485</h3>
+        <p>Magistrala RS-485 to dwa przewody (A i B) plus opcjonalnie GND. Podłączenie:</p>
+        <ul>
+          <li><strong>Waveshare RS485/CAN HAT</strong> — wkładasz na piny GPIO Raspberry Pi. Zaciski śrubowe: A↔A, B↔B z licznika</li>
+          <li><strong>GND</strong> — podłącz jeśli odległość > 5m lub masz problemy z komunikacją</li>
+          <li><strong>Terminacja</strong> — rezystor 120Ω między A i B na końcach magistrali. Waveshare HAT ma wbudowany (jumper). Przy jednym liczniku na krótkim kablu zwykle nie potrzeba</li>
+          <li><strong>Polaryzacja</strong> — A to D+, B to D-. Jeśli podłączyłeś i skaner nie odpowiada, zamień A z B</li>
+          <li>Maksymalna długość magistrali RS-485: do 1200m przy 9600 baud</li>
+          <li>Maksymalna liczba urządzeń na jednej magistrali: 32 (standard) lub 256 (z repeaterem)</li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+
+</main>
+
+<!-- Chart detail modal -->
+<div class="chart-modal-overlay" id="chart-modal" onclick="if(event.target===this)closeChartModal()">
+  <div class="chart-modal">
+    <div class="chart-modal-head">
+      <div class="info">
+        <h3 id="modal-title">—</h3>
+        <p id="modal-subtitle">—</p>
+      </div>
+      <button class="close-btn" onclick="closeChartModal()">&times;</button>
+    </div>
+    <div class="chart-modal-stats">
+      <div class="stat"><span class="stat-label">Aktualna</span><span class="stat-val" id="modal-current">—</span></div>
+      <div class="stat"><span class="stat-label">Min</span><span class="stat-val" id="modal-min" style="color:var(--cyan)">—</span></div>
+      <div class="stat"><span class="stat-label">Max</span><span class="stat-val" id="modal-max" style="color:var(--red)">—</span></div>
+      <div class="stat"><span class="stat-label">Średnia</span><span class="stat-val" id="modal-avg" style="color:var(--yellow)">—</span></div>
+      <div class="stat"><span class="stat-label">Odczytów</span><span class="stat-val" id="modal-count" style="color:var(--text2)">—</span></div>
+    </div>
+    <div class="chart-modal-canvas">
+      <canvas id="modal-canvas"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────
+let liveTimer=null, scanData=null, editingFile=null, dashBuilt=false;
+let dashMode='cards';
+let chartHistory={};
+const HISTORY_LEN=60;
+let liveScanTimer=null;
+let liveScanLog=[]; // for CSV export
+
+const $=id=>document.getElementById(id);
+const conn=()=>({host:$('conn-host').value, port:+$('conn-port').value, unit:+$('conn-unit').value});
+
+function toast(msg,ok=true){const t=document.createElement('div');t.className='toast '+(ok?'toast-ok':'toast-err');t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),3000)}
+
+function showView(name){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  $('view-'+name).classList.add('active');
+  const idx={dashboard:0,scanner:1,presets:2,settings:3,help:4}[name];
+  document.querySelectorAll('.nav-item')[idx].classList.add('active');
+  if(name==='presets')loadPresets();
+  if(name==='dashboard')loadPresetSel();
+  if(name==='settings')loadModeInfo();
+}
+
+function setConn(ok){const c=conn();$('conn-dot').className='conn-dot '+(ok?'on':'off');$('conn-text').textContent=ok?`${c.host}:${c.port}`:'Brak połączenia';$('conn-text').style.color=ok?'var(--green)':'var(--red)'}
+async function testConn(){try{const r=await fetch('/api/ping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(conn())});const d=await r.json();setConn(d.ok);toast(d.ok?'Połączono':'Brak odpowiedzi',d.ok)}catch(e){toast('Błąd: '+e.message,false)}}
+
+// ═══ DASHBOARD ═══════════════════════════════════════════════
+
+function setDashMode(mode, btn){
+  dashMode=mode;
+  document.querySelectorAll('.mode-toggle button').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  dashBuilt=false;
+}
+
+const GM={
+  voltage:{label:'Napięcia fazowe',color:'--green',cols:'grid-3'},
+  current:{label:'Prądy fazowe',color:'--yellow',cols:'grid-3'},
+  power:{label:'Moce',color:'--orange',cols:'grid-3'},
+  pf:{label:'Współczynnik mocy',color:'--purple',cols:'grid-3'},
+  total:{label:'Wartości sumaryczne',color:'--green',cols:'grid-4'},
+  system:{label:'System',color:'--cyan',cols:'grid-4'},
+  energy:{label:'Energia',color:'--blue',cols:'grid-3'},
+  line_volt:{label:'Napięcia międzyfazowe',color:'--green',cols:'grid-3'},
+  thd:{label:'THD',color:'--red',cols:'grid-3'},
+  other:{label:'Inne',color:'--cyan',cols:'grid-4'},
+};
+const GRP_ORDER=['voltage','current','power','total','pf','system','energy','line_volt','thd','other'];
+const KEY_COLORS={'--green':'#22c55e','--yellow':'#eab308','--orange':'#f97316','--blue':'#3b82f6','--purple':'#a855f7','--cyan':'#06b6d4','--red':'#ef4444'};
+const PHASE_RE=[/L1|faza 1| 1\)/i, /L2|faza 2| 2\)/i, /L3|faza 3| 3\)/i];
+const PHASE_CLR=['#ef4444','#eab308','#3b82f6'];
+
+function getColor(label, groupColor){
+  for(let i=0;i<3;i++) if(PHASE_RE[i].test(label)) return PHASE_CLR[i];
+  return KEY_COLORS[groupColor]||'#94a3b8';
+}
+
+function groupValues(vals){
+  const groups={};
+  for(const[k,v]of Object.entries(vals)){const g=v.group||'other';if(!groups[g])groups[g]=[];groups[g].push({key:k,...v})}
+  return groups;
+}
+
+function pushHistory(vals){
+  const t=new Date().toLocaleTimeString('pl-PL');
+  for(const[k,v]of Object.entries(vals)){
+    if(!chartHistory[k])chartHistory[k]=[];
+    chartHistory[k].push({t,v:v.value});
+    if(chartHistory[k].length>HISTORY_LEN)chartHistory[k].shift();
+  }
+}
+
+function renderCards(vals){
+  const groups=groupValues(vals);
+  let h='';
+  for(const gk of GRP_ORDER){
+    if(!groups[gk])continue;
+    const m=GM[gk]||GM.other;
+    h+=`<div class="group-header">${m.label}</div><div class="grid ${m.cols}">`;
+    for(const v of groups[gk]){
+      const clr=getColor(v.label,m.color);
+      const dv=v.value!=null?v.value.toFixed(v.decimals):'—';
+      h+=`<div class="val-card"><div class="acc" style="background:${clr}"></div><div class="lbl">${v.label}</div><div class="val" id="v-${v.key}">${dv}<span class="unt">${v.unit}</span></div></div>`;
+    }
+    h+='</div>';
+  }
+  $('dash-content').innerHTML=h;
+}
+
+function updateCards(vals){
+  for(const[k,v]of Object.entries(vals)){
+    const el=$('v-'+k);
+    if(el){const dv=v.value!=null?v.value.toFixed(v.decimals):'—';el.innerHTML=`${dv}<span class="unt">${v.unit}</span>`}
+  }
+}
+
+function renderCharts(vals){
+  const groups=groupValues(vals);
+  window._chartMeta=[];
+  let h='';
+  for(const gk of GRP_ORDER){
+    if(!groups[gk])continue;
+    const m=GM[gk]||GM.other;
+    const cols=groups[gk].length>=3?'grid-3':'grid-'+groups[gk].length;
+    h+=`<div class="group-header">${m.label}</div><div class="grid ${cols}" style="margin-bottom:8px">`;
+    for(const v of groups[gk]){
+      const clr=getColor(v.label,m.color);
+      const dv=v.value!=null?v.value.toFixed(v.decimals):'—';
+      h+=`<div class="chart-card-click" style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow:hidden" onclick="openChartModal('${v.key}','${clr}',${v.decimals})">`;
+      h+=`<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">`;
+      h+=`<div><div style="font-size:12px;color:var(--text2);font-weight:500">${v.label}</div>`;
+      h+=`<div style="font-size:10px;color:var(--text3)">${v.unit?'Wartość w '+v.unit:''}</div></div>`;
+      h+=`<div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--white)" id="cv-${v.key}">${dv}</div></div>`;
+      h+=`<canvas id="chart-${v.key}" height="90" style="width:100%;margin:0 -16px -14px -16px;display:block"></canvas>`;
+      h+=`</div>`;
+      window._chartMeta.push({key:v.key,color:clr,decimals:v.decimals});
+    }
+    h+=`</div>`;
+  }
+  $('dash-content').innerHTML=h;
+}
+
+function drawAreaChart(canvasId, data, color){
+  const canvas=$(canvasId);
+  if(!canvas)return;
+  const rect=canvas.getBoundingClientRect();
+  const W=Math.floor(rect.width*2)||600;
+  const H=Math.floor(rect.height*2)||180;
+  canvas.width=W;canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+
+  if(data.length<2)return;
+  const nums=data.filter(v=>v!=null);
+  if(nums.length<2)return;
+
+  const mn=Math.min(...nums), mx=Math.max(...nums);
+  const range=mx-mn||Math.abs(mn)*0.01||1;
+  const pad=range*0.15;
+  const yMin=mn-pad, yMax=mx+pad;
+
+  const px=i=>i/(data.length-1)*W;
+  const py=v=>H-((v-yMin)/(yMax-yMin))*H;
+
+  // Gradient fill
+  const grad=ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0, color+'50');
+  grad.addColorStop(1, color+'08');
+
+  // Draw filled area with smooth bezier curves
+  ctx.beginPath();
+  ctx.moveTo(px(0),H);
+  ctx.lineTo(px(0),py(data[0]??mn));
+  for(let i=1;i<data.length;i++){
+    const x0=px(i-1),y0=py(data[i-1]??mn);
+    const x1=px(i),y1=py(data[i]??mn);
+    const cx=(x0+x1)/2;
+    ctx.bezierCurveTo(cx,y0,cx,y1,x1,y1);
+  }
+  ctx.lineTo(px(data.length-1),H);
+  ctx.closePath();
+  ctx.fillStyle=grad;
+  ctx.fill();
+
+  // Draw line on top
+  ctx.beginPath();
+  ctx.moveTo(px(0),py(data[0]??mn));
+  for(let i=1;i<data.length;i++){
+    const x0=px(i-1),y0=py(data[i-1]??mn);
+    const x1=px(i),y1=py(data[i]??mn);
+    const cx=(x0+x1)/2;
+    ctx.bezierCurveTo(cx,y0,cx,y1,x1,y1);
+  }
+  ctx.strokeStyle=color;
+  ctx.lineWidth=3;
+  ctx.stroke();
+}
+
+function updateCharts(vals){
+  // 1. ALWAYS update values first
+  for(const[k,v]of Object.entries(vals)){
+    const el=$('cv-'+k);
+    if(el) el.textContent=v.value!=null?v.value.toFixed(v.decimals):'—';
+  }
+
+  // 2. Draw each chart
+  if(!window._chartMeta)return;
+  for(const{key,color}of window._chartMeta){
+    try{
+      const hist=chartHistory[key]||[];
+      if(hist.length<2)continue;
+      drawAreaChart('chart-'+key, hist.map(h=>h.v), color);
+    }catch(e){}
+  }
+}
+
+// ═══ CHART DETAIL MODAL ═════════════════════════════════════
+
+let modalKey=null, modalColor=null, modalDecimals=2, modalTimer=null;
+
+function openChartModal(key, color, decimals){
+  modalKey=key;modalColor=color;modalDecimals=decimals;
+  // Find label from _chartMeta or from cv- element's parent
+  const meta=window._chartMeta?.find(m=>m.key===key);
+  const cvEl=$('cv-'+key);
+  const card=cvEl?.closest('.chart-card-click');
+  const label=card?.querySelector('div[style*="font-size:12px"]')?.textContent||key;
+  const unit=card?.querySelector('div[style*="font-size:10px"]')?.textContent?.replace('Wartość w ','')||'';
+
+  $('modal-title').textContent=label;
+  $('modal-subtitle').textContent=unit?`Wartość w ${unit} · Historia ${HISTORY_LEN}s`:`Historia ${HISTORY_LEN}s`;
+
+  $('chart-modal').classList.add('open');
+  document.addEventListener('keydown',modalEsc);
+
+  updateModalChart();
+  modalTimer=setInterval(updateModalChart,1000);
+}
+
+function closeChartModal(){
+  $('chart-modal').classList.remove('open');
+  document.removeEventListener('keydown',modalEsc);
+  if(modalTimer){clearInterval(modalTimer);modalTimer=null}
+  modalKey=null;
+}
+
+function modalEsc(e){if(e.key==='Escape')closeChartModal()}
+
+function updateModalChart(){
+  if(!modalKey)return;
+  const hist=chartHistory[modalKey]||[];
+  const nums=hist.map(h=>h.v).filter(v=>v!=null);
+  if(!nums.length)return;
+
+  const cur=nums[nums.length-1];
+  const mn=Math.min(...nums), mx=Math.max(...nums);
+  const avg=nums.reduce((a,b)=>a+b,0)/nums.length;
+
+  $('modal-current').textContent=cur.toFixed(modalDecimals);
+  $('modal-min').textContent=mn.toFixed(modalDecimals);
+  $('modal-max').textContent=mx.toFixed(modalDecimals);
+  $('modal-avg').textContent=avg.toFixed(modalDecimals);
+  $('modal-count').textContent=hist.length.toString();
+
+  drawDetailChart('modal-canvas', hist, modalColor, modalDecimals);
+}
+
+function drawDetailChart(canvasId, hist, color, decimals){
+  const canvas=$(canvasId);
+  if(!canvas)return;
+  const rect=canvas.getBoundingClientRect();
+  const dpr=window.devicePixelRatio||1;
+  const W=Math.floor(rect.width*dpr);
+  const H=Math.floor(rect.height*dpr);
+  canvas.width=W;canvas.height=H;
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+
+  const data=hist.map(h=>h.v);
+  const times=hist.map(h=>h.t);
+  if(data.length<2)return;
+  const nums=data.filter(v=>v!=null);
+  if(nums.length<2)return;
+
+  const mn=Math.min(...nums), mx=Math.max(...nums);
+  const avg=nums.reduce((a,b)=>a+b,0)/nums.length;
+  const range=mx-mn||Math.abs(mn)*0.01||1;
+  const padY=range*0.2;
+  const yMin=mn-padY, yMax=mx+padY;
+
+  const ml=70*dpr, mr=20*dpr, mt=20*dpr, mb=36*dpr; // margins
+  const cw=W-ml-mr, ch=H-mt-mb; // chart area
+
+  const px=i=>ml+i/(data.length-1)*cw;
+  const py=v=>mt+ch-((v-yMin)/(yMax-yMin))*ch;
+
+  // Grid lines & Y labels
+  ctx.font=`${11*dpr}px Consolas, monospace`;
+  ctx.textAlign='right';
+  const ySteps=5;
+  for(let i=0;i<=ySteps;i++){
+    const v=yMin+(yMax-yMin)*i/ySteps;
+    const y=py(v);
+    ctx.strokeStyle='#1e293b';
+    ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(ml,y);ctx.lineTo(W-mr,y);ctx.stroke();
+    ctx.fillStyle='#64748b';
+    ctx.fillText(v.toFixed(decimals), ml-8*dpr, y+4*dpr);
+  }
+
+  // X labels (time)
+  ctx.textAlign='center';
+  const xLabelCount=Math.min(8, data.length);
+  const xStep=Math.max(1, Math.floor(data.length/xLabelCount));
+  for(let i=0;i<data.length;i+=xStep){
+    const x=px(i);
+    ctx.strokeStyle='#1e293b';
+    ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(x,mt);ctx.lineTo(x,mt+ch);ctx.stroke();
+    ctx.fillStyle='#64748b';
+    ctx.fillText(times[i]||'', x, H-8*dpr);
+  }
+
+  // Average line (dashed)
+  const avgY=py(avg);
+  ctx.setLineDash([6*dpr,4*dpr]);
+  ctx.strokeStyle='#eab30866';
+  ctx.lineWidth=1.5*dpr;
+  ctx.beginPath();ctx.moveTo(ml,avgY);ctx.lineTo(W-mr,avgY);ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Gradient fill
+  const grad=ctx.createLinearGradient(0,mt,0,mt+ch);
+  grad.addColorStop(0, color+'40');
+  grad.addColorStop(1, color+'05');
+
+  // Area
+  ctx.beginPath();
+  ctx.moveTo(px(0),mt+ch);
+  ctx.lineTo(px(0),py(data[0]??mn));
+  for(let i=1;i<data.length;i++){
+    const x0=px(i-1),y0=py(data[i-1]??mn);
+    const x1=px(i),y1=py(data[i]??mn);
+    const cx=(x0+x1)/2;
+    ctx.bezierCurveTo(cx,y0,cx,y1,x1,y1);
+  }
+  ctx.lineTo(px(data.length-1),mt+ch);
+  ctx.closePath();
+  ctx.fillStyle=grad;
+  ctx.fill();
+
+  // Main line
+  ctx.beginPath();
+  ctx.moveTo(px(0),py(data[0]??mn));
+  for(let i=1;i<data.length;i++){
+    const x0=px(i-1),y0=py(data[i-1]??mn);
+    const x1=px(i),y1=py(data[i]??mn);
+    const cx=(x0+x1)/2;
+    ctx.bezierCurveTo(cx,y0,cx,y1,x1,y1);
+  }
+  ctx.strokeStyle=color;
+  ctx.lineWidth=2.5*dpr;
+  ctx.stroke();
+
+  // Current value dot (last point)
+  const lastX=px(data.length-1), lastY=py(data[data.length-1]??mn);
+  ctx.beginPath();
+  ctx.arc(lastX,lastY,5*dpr,0,Math.PI*2);
+  ctx.fillStyle=color;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(lastX,lastY,3*dpr,0,Math.PI*2);
+  ctx.fillStyle='#fff';
+  ctx.fill();
+
+  // Min marker
+  const minIdx=data.indexOf(mn);
+  if(minIdx>=0){
+    const mx2=px(minIdx), my2=py(mn);
+    ctx.beginPath();ctx.arc(mx2,my2,4*dpr,0,Math.PI*2);ctx.fillStyle='#06b6d4';ctx.fill();
+  }
+  // Max marker
+  const maxIdx=data.indexOf(mx);
+  if(maxIdx>=0){
+    const mx3=px(maxIdx), my3=py(mx);
+    ctx.beginPath();ctx.arc(mx3,my3,4*dpr,0,Math.PI*2);ctx.fillStyle='#ef4444';ctx.fill();
+  }
+}
+
+async function fetchLive(){
+  const preset=$('dash-preset').value;
+  if(!preset)return;
+  try{
+    const r=await fetch('/api/live',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...conn(),preset})});
+    const d=await r.json();
+    if(d.error){setConn(false);return}
+    setConn(true);
+    $('dash-time').textContent=new Date().toLocaleTimeString('pl-PL');
+    pushHistory(d.values);
+    if(!dashBuilt){
+      if(dashMode==='charts')renderCharts(d.values); else renderCards(d.values);
+      dashBuilt=true;
+    }else{
+      if(dashMode==='charts')updateCharts(d.values); else updateCards(d.values);
+    }
+  }catch(e){}
+}
+
+function startLive(){dashBuilt=false;chartHistory={};$('dash-content').innerHTML='<div class="empty"><span class="spinner" style="width:24px;height:24px"></span><p>Łączenie...</p></div>';if(liveTimer)clearInterval(liveTimer);fetchLive();liveTimer=setInterval(fetchLive,1000)}
+
+async function loadPresetSel(){
+  try{const r=await fetch('/api/presets');const ps=await r.json();const sel=$('dash-preset');const cur=sel.value;
+    sel.innerHTML='<option value="">— Wybierz preset —</option>';
+    ps.forEach(p=>{const o=document.createElement('option');o.value=p._filename;
+      const mfr=[p.manufacturer,p.model].filter(Boolean).join(' ');
+      o.textContent=mfr?`${p.name||p._filename} (${mfr})`:(p.name||p._filename);sel.appendChild(o)});
+    if(cur)sel.value=cur}catch(e){}
+}
+
+// ═══ SCANNER ═════════════════════════════════════════════════
+
+async function runScan(){
+  const btn=$('scan-btn');btn.disabled=true;btn.innerHTML='<span class="spinner"></span> Skanowanie...';
+  try{
+    const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...conn(),start:+$('scan-start').value,end:+$('scan-end').value,register_type:$('scan-regtype').value})});
+    const d=await r.json();
+    if(d.error){toast(d.error,false);return}
+    scanData=d.registers;$('scan-save').disabled=false;$('scan-csv').disabled=false;$('scan-live-btn').disabled=false;
+    setConn(true);renderScan(d.registers);
+    const found=d.registers.filter(r=>r.hint).length;
+    toast(`${found} rozpoznanych z ${d.count} par rejestrów`);
+    // Add to live log
+    liveScanLog.push({time:new Date().toISOString(),registers:d.registers});
+  }catch(e){toast('Błąd: '+e.message,false)}
+  finally{btn.disabled=false;btn.textContent='Skanuj'}
+}
+
+function renderScan(regs){
+  // Check if table structure already exists and matches
+  const existing=document.querySelector('#scan-results .scan-table tbody');
+  if(existing && existing.children.length===regs.length){
+    // Update in-place — no flicker, preserves scroll
+    updateScanInPlace(regs);
+    return;
+  }
+  // First render — build full table
+  let h='<div class="scan-wrap" id="scan-scroll"><table class="scan-table"><thead><tr><th>Adres</th><th>Raw</th><th>Big-Endian</th><th>Word-Swap</th><th>Identyfikacja</th></tr></thead><tbody>';
+  for(let i=0;i<regs.length;i++){
+    const r=regs[i];
+    const be=r.decoded.big_endian,ws=r.decoded.word_swap;
+    const fv=v=>(v===null||v===undefined)?'<span style="color:var(--text3)">—</span>':v.toFixed(4);
+    const hi=r.hint;
+    let hh='<span style="color:var(--text3)">—</span>';
+    if(hi)hh=`<span class="guess g-${hi.guess}">${hi.label}: ${hi.value}</span>`;
+    h+=`<tr id="sr-${i}" style="${hi?'':'opacity:.4'}"><td class="addr">0x${r.address.toString(16).toUpperCase().padStart(4,'0')}</td><td class="raw" id="sr-raw-${i}">${r.raw_hex}</td><td class="v" id="sr-be-${i}">${fv(be)}</td><td class="v" id="sr-ws-${i}">${fv(ws)}</td><td id="sr-hint-${i}">${hh}</td></tr>`;
+  }
+  h+='</tbody></table></div>';
+  $('scan-results').innerHTML=h;
+}
+
+function updateScanInPlace(regs){
+  const fv=v=>(v===null||v===undefined)?'<span style="color:var(--text3)">—</span>':v.toFixed(4);
+  for(let i=0;i<regs.length;i++){
+    const r=regs[i];
+    const rawEl=$('sr-raw-'+i), beEl=$('sr-be-'+i), wsEl=$('sr-ws-'+i), hintEl=$('sr-hint-'+i), rowEl=$('sr-'+i);
+    if(!rawEl)continue;
+    rawEl.textContent=r.raw_hex;
+    beEl.innerHTML=fv(r.decoded.big_endian);
+    wsEl.innerHTML=fv(r.decoded.word_swap);
+    const hi=r.hint;
+    if(hi){
+      hintEl.innerHTML=`<span class="guess g-${hi.guess}">${hi.label}: ${hi.value}</span>`;
+      rowEl.style.opacity='';
+    }else{
+      hintEl.innerHTML='<span style="color:var(--text3)">—</span>';
+      rowEl.style.opacity='.4';
+    }
+  }
+}
+
+// Live scan
+function toggleLiveScan(){
+  const btn=$('scan-live-btn');
+  const status=$('scan-status');
+  if(liveScanTimer){
+    clearInterval(liveScanTimer);liveScanTimer=null;
+    btn.innerHTML='Live';btn.classList.remove('btn-danger');btn.classList.add('btn-warn');
+    status.style.display='none';
+    return;
+  }
+  btn.textContent='Stop';
+  btn.classList.remove('btn-warn');btn.classList.add('btn-danger');
+  status.style.display='flex';
+  let count=0;
+  const update=async()=>{
+    count++;
+    status.innerHTML=`<span class="live-dot recording"></span>Nagrywanie... odczyt #${count} · ${liveScanLog.length} zapisanych`;
+    await runScanSilent();
+  };
+  update();
+  liveScanTimer=setInterval(update,1500);
+}
+
+async function runScanSilent(){
+  // Live mode scan — no button animation, no toast, no flicker
+  try{
+    const r=await fetch('/api/scan',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({...conn(),start:+$('scan-start').value,end:+$('scan-end').value,register_type:$('scan-regtype').value})});
+    const d=await r.json();
+    if(d.error)return;
+    scanData=d.registers;
+    setConn(true);
+    renderScan(d.registers); // Will use in-place update if table exists
+    liveScanLog.push({time:new Date().toISOString(),registers:d.registers});
+  }catch(e){}
+}
+
+function exportScanCSV(){
+  if(!liveScanLog.length&&!scanData){toast('Brak danych do eksportu',false);return}
+  let csv='Timestamp,Address,RawHex,BigEndian,WordSwap,LittleEndian,Hint\n';
+  const logs=liveScanLog.length?liveScanLog:[{time:new Date().toISOString(),registers:scanData}];
+  for(const log of logs){
+    for(const r of log.registers){
+      const be=r.decoded.big_endian,ws=r.decoded.word_swap,le=r.decoded.little_endian;
+      const hint=r.hint?r.hint.label+':'+r.hint.value:'';
+      csv+=`${log.time},0x${r.address.toString(16).toUpperCase().padStart(4,'0')},${r.raw_hex},${be??''},${ws??''},${le??''},${hint}\n`;
+    }
+  }
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+  a.download=`modbus_scan_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+  a.click();toast(`Wyeksportowano ${logs.length} skanów`);
+}
+
+async function scanToPreset(){
+  if(!scanData)return;
+  const regs={};let i=0;
+  for(const r of scanData){
+    if(r.hint){const k=`${r.hint.guess}_${i}`;
+      regs[k]={address:r.address,unit:r.hint.unit,decimals:r.hint.guess==='pf'?3:r.hint.guess==='frequency'?2:['current','thd'].includes(r.hint.guess)?2:1,
+        group:r.hint.guess,label:`${r.hint.label} (0x${r.address.toString(16).toUpperCase()})`};i++}}
+  const preset={name:"Skan "+new Date().toLocaleString('pl-PL'),description:"Auto-wygenerowany",manufacturer:"",model:"",byte_order:"big_endian",register_type:$('scan-regtype').value,phases:3,registers:regs};
+  try{const r=await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...preset,_save_as:preset.name})});
+    const d=await r.json();toast(`Preset zapisany z ${i} rejestrami`);loadPresetSel();
+    showView('dashboard');setTimeout(()=>{$('dash-preset').value=d.filename;startLive()},300)}catch(e){toast('Błąd: '+e.message,false)}
+}
+
+// ═══ PRESETS ═════════════════════════════════════════════════
+
+async function loadPresets(){
+  try{const r=await fetch('/api/presets');const ps=await r.json();const list=$('preset-list');
+    if(!ps.length){list.innerHTML='<div class="empty"><p>Brak presetów</p></div>';return}
+    list.innerHTML=ps.map(p=>{const fn=p._filename,rc=p.registers?Object.keys(p.registers).length:0;
+      return `<div class="preset-item ${fn===editingFile?'selected':''}" onclick="editPreset('${fn}')">
+        <div><h4>${p.name||fn}</h4><p>${p.manufacturer||''} ${p.model||''} · ${rc} rej.</p></div>
+        <div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();editPreset('${fn}')">Edytuj</button>
+        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();removePreset('${fn}')">Usuń</button></div></div>`}).join('')}catch(e){toast('Błąd',false)}
+}
+async function editPreset(fn){try{const r=await fetch(`/api/presets/${fn}`);const d=await r.json();editingFile=fn;$('editor-card').style.display='block';$('editor-title').textContent='Edycja: '+(d.name||fn);$('preset-json').value=JSON.stringify(d,null,2);loadPresets()}catch(e){toast('Błąd',false)}}
+function newPreset(){const tpl={name:"Nowy preset",description:"",manufacturer:"",model:"",byte_order:"big_endian",register_type:"input",phases:3,registers:{voltage_l1:{address:0,unit:"V",decimals:1,group:"voltage",label:"Napięcie L1"}}};editingFile=null;$('editor-card').style.display='block';$('editor-title').textContent='Nowy preset';$('preset-json').value=JSON.stringify(tpl,null,2)}
+async function saveEditor(){let data;try{data=JSON.parse($('preset-json').value)}catch(e){toast('Nieprawidłowy JSON: '+e.message,false);return}
+  try{if(editingFile){await fetch(`/api/presets/${editingFile}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)})}else{const r=await fetch('/api/presets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...data,_save_as:data.name||'preset'})});const d=await r.json();editingFile=d.filename}toast('Zapisano');loadPresets();loadPresetSel()}catch(e){toast('Błąd',false)}}
+async function removePreset(fn){if(!confirm(`Usunąć "${fn}"?`))return;await fetch(`/api/presets/${fn}`,{method:'DELETE'});if(editingFile===fn){editingFile=null;$('editor-card').style.display='none'}toast('Usunięto');loadPresets();loadPresetSel()}
+function closeEditor(){$('editor-card').style.display='none';editingFile=null;loadPresets()}
+
+// ═══ SETTINGS ════════════════════════════════════════════════
+async function loadModeInfo(){try{const r=await fetch('/api/config');const d=await r.json();const el=$('mode-info');
+  if(d.mode==='serial'){el.innerHTML=`<span style="color:var(--green);font-weight:600">RS-485 Serial</span><br><span style="font-family:var(--mono);font-size:12px;color:var(--text2)">${d.serial.port} @ ${d.serial.baudrate} baud</span>`}
+  else{el.innerHTML=`<span style="color:var(--blue);font-weight:600">TCP (symulator/gateway)</span>`}}catch(e){$('mode-info').textContent='Brak połączenia z serwerem'}}
+
+// Init
+loadPresetSel();testConn();loadModeInfo();
+</script>
+</body>
+</html>
