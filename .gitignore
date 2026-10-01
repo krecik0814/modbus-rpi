@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+# dane uruchomieniowe (konfiguracja, historia SQLite)
+data/
+*.tmp

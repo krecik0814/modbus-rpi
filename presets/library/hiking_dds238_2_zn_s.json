@@ -1,0 +1,23 @@
+{
+  "name": "Hiking DDS238-2 ZN/S",
+  "manufacturer": "Hiking",
+  "model": "DDS238-2 ZN/S / DDS238-2 ZN/SR",
+  "description": "Tani licznik 1-fazowy na szynę DIN z pomiarem energii pobranej i oddanej (wersja ZN/SR ma dodatkowo przekaźnik). Rejestry holding FC03, liczby całkowite big-endian ze skalowaniem. Fabrycznie adres 1, 9600 bod 8N1; zapis rejestrów (np. zmiana adresu) działa tylko funkcją 16 (0x10), nie 06.",
+  "phases": 1,
+  "source": "Hiking DDS238-2 ZN/S User's Manual (tabela rejestrów 9.3; RS485 9600 bod, brak parzystości): https://us.pstd.ru/wp-content/uploads/2024/10/DDS238-2-ZNS-USER-MANUAL-C2.pdf; karta katalogowa DDS238-2 ZN/S (domyślnie 9600 bod, brak parzystości, 1 bit stopu, 8 bitów danych): http://www.chinaenergymeter.es/products/DDS238-2-ZN-S-RS485-D1205.pdf; fawno/Modbus DDS238-2 ZN-S Modbus.md: https://github.com/fawno/Modbus/blob/master/DDS238-2%20ZN-S%20Modbus.md; ESPHome: https://github.com/NicoDupont/Esphome-Hiking-DDS238-2-ZN-S-RS485/blob/main/test-dds238-2-zn.yaml; Home Assistant: https://kaspars.net/blog/hiking-dds238-2-modbus; openHAB (odczyt rejestrów, 9600 8N1, adres fabryczny 1): https://community.openhab.org/t/dds238-2-energy-meter-with-modbus-interface/81463; E-NINA/dds238_Energy_Meter: https://github.com/E-NINA/dds238_Energy_Meter/blob/master/dds238.h",
+  "register_type": "holding",
+  "byte_order": "ABCD",
+  "data_type": "uint16",
+  "serial": {"baudrate": 9600, "parity": "N", "stopbits": 1},
+  "probe": "voltage_l1",
+  "registers": {
+    "energy_total":   {"address": 0, "type": "uint32", "scale": 0.01, "label": "Energia całkowita", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export":  {"address": 8, "type": "uint32", "scale": 0.01, "label": "Energia oddana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_import":  {"address": 10, "type": "uint32", "scale": 0.01, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "voltage_l1":     {"address": 12, "scale": 0.1, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":     {"address": 13, "scale": 0.01, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "power_l1":       {"address": 14, "type": "int16", "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "pf_l1":          {"address": 16, "scale": 0.001, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "frequency":      {"address": 17, "scale": 0.01, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2}
+  }
+}

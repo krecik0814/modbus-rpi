@@ -1,0 +1,21 @@
+{
+  "name": "Peacefair PZEM-017 (DC)",
+  "manufacturer": "Peacefair",
+  "model": "PZEM-017 / PZEM-003",
+  "description": "Moduł pomiarowy DC 0-300 V z RS485: PZEM-003 (do 10 A, bocznik wbudowany) i PZEM-017 (bocznik zewnętrzny 50/100/200/300 A, zakres ustawiany w rejestrze konfiguracyjnym 0x0003). Rejestry FC04, liczby całkowite ze skalowaniem, 32-bitowe młodszym słowem naprzód (CDAB). Fabrycznie 9600 bod 8N2 (2 bity stopu); przy napięciu mierzonym poniżej 7 V moduł wymaga osobnego zasilania 5 V.",
+  "phases": 1,
+  "source": "Peacefair PZEM-003/017 User Manual: https://myosuploads3.banggood.com/products/20190723/20190723213410PZEM-003017UserManual.pdf; ESPHome pzemdc: https://raw.githubusercontent.com/esphome/esphome/dev/esphome/components/pzemdc/pzemdc.cpp; Tasmota xnrg_06_pzem_dc.ino (9600 8N2): https://raw.githubusercontent.com/arendst/Tasmota/master/tasmota/tasmota_xnrg_energy/xnrg_06_pzem_dc.ino",
+  "register_type": "input",
+  "byte_order": "CDAB",
+  "data_type": "uint16",
+  "serial": {"baudrate": 9600, "parity": "N", "stopbits": 2},
+  "probe": "voltage_dc",
+  "registers": {
+    "voltage_dc":          {"address": 0, "scale": 0.01, "label": "Napięcie DC", "unit": "V", "group": "voltage", "decimals": 2},
+    "current_dc":          {"address": 1, "scale": 0.01, "label": "Prąd DC", "unit": "A", "group": "current", "decimals": 2},
+    "power_dc":            {"address": 2, "type": "uint32", "scale": 0.1, "label": "Moc DC", "unit": "W", "group": "power", "decimals": 1},
+    "energy_import":       {"address": 4, "type": "uint32", "scale": 0.001, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "alarm_voltage_high":  {"address": 6, "type": "int16", "scale": -1, "label": "Alarm napięcia wysokiego (1 = aktywny)", "unit": "", "group": "other", "decimals": 0},
+    "alarm_voltage_low":   {"address": 7, "type": "int16", "scale": -1, "label": "Alarm napięcia niskiego (1 = aktywny)", "unit": "", "group": "other", "decimals": 0}
+  }
+}

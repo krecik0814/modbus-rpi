@@ -1,0 +1,28 @@
+{
+  "name": "Orno OR-WE-514/515",
+  "manufacturer": "Orno",
+  "model": "OR-WE-514 / OR-WE-515",
+  "description": "Licznik 1-fazowy 100 A z RS-485 (Modbus RTU); OR-WE-515 ma dodatkowo taryfy i zegar. Rejestry holding FC03, liczby całkowite big-endian ze skalą (0,01 V, 0,001 A, 1 W, energia 0,01 kWh). Rejestry taryf T1/T2 mają znaczenie tylko w OR-WE-515.",
+  "phases": 1,
+  "source": "mbmd meters/rs485/orno1p.go (github.com/volkszaehler/mbmd); Register description OR-WE-514&OR-WE-515: https://github.com/gituser-rk/orno-modbus-mqtt/blob/master/Register%20description%20OR-WE-514%26OR-WE-515.pdf; ustawienia portu: https://files.orno.pl/manuals/OR-WE-512,514,515_manual_EN.pdf",
+  "register_type": "holding",
+  "byte_order": "ABCD",
+  "data_type": "uint32",
+  "serial": {"baudrate": 9600, "parity": "E", "stopbits": 1},
+  "probe": "voltage_l1",
+  "registers": {
+    "frequency":                {"address": 304, "type": "uint16", "scale": 0.01, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
+    "voltage_l1":               {"address": 305, "type": "uint16", "scale": 0.01, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":               {"address": 313, "scale": 0.001, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "power_l1":                 {"address": 320, "type": "int32", "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "reactive_l1":              {"address": 328, "type": "int32", "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
+    "apparent_l1":              {"address": 336, "type": "int32", "label": "Moc pozorna L1", "unit": "VA", "group": "power", "decimals": 0},
+    "pf_l1":                    {"address": 344, "type": "int16", "scale": 0.001, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "energy_total":             {"address": 40960, "scale": 0.01, "label": "Energia całkowita", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_total_t1":          {"address": 40962, "scale": 0.01, "label": "Energia całkowita T1", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_total_t2":          {"address": 40964, "scale": 0.01, "label": "Energia całkowita T2", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_reactive_total":    {"address": 40990, "scale": 0.01, "label": "Energia bierna całkowita", "unit": "kvarh", "group": "energy", "decimals": 2},
+    "energy_reactive_total_t1": {"address": 40992, "scale": 0.01, "label": "Energia bierna całkowita T1", "unit": "kvarh", "group": "energy", "decimals": 2},
+    "energy_reactive_total_t2": {"address": 40994, "scale": 0.01, "label": "Energia bierna całkowita T2", "unit": "kvarh", "group": "energy", "decimals": 2}
+  }
+}

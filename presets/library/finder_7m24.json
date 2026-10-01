@@ -1,0 +1,30 @@
+{
+  "name": "Finder 7M.24",
+  "manufacturer": "Finder",
+  "model": "7M.24 (wersje z RS485 Modbus RTU)",
+  "description": "Licznik energii 1-fazowy z certyfikatem MID. Rejestry tylko do odczytu FC04, wartości float32 big-endian z bloku IEEE 754 (adresy 2500+). Liczniki energii n1-n4 są konfigurowalne; przyjęto przypisanie jak w mbmd (n1 czynna pobrana, n2 bierna pobrana, n3 czynna oddana, n4 bierna oddana), odczyt w Wh/varh przeliczany na kWh/kvarh.",
+  "phases": 1,
+  "source": "mbmd meters/rs485/finder7m24.go (github.com/volkszaehler/mbmd); Finder Modbus communication protocol 7M24-7M38: https://cdn.findernet.com/app/uploads/2021/09/20090052/Modbus-7M24-7M38_v2_30062021.pdf",
+  "register_type": "input",
+  "byte_order": "ABCD",
+  "data_type": "float32",
+  "probe": "voltage_l1",
+  "registers": {
+    "voltage_l1":             {"address": 2500, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":             {"address": 2516, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "power_l1":               {"address": 2536, "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "reactive_l1":            {"address": 2544, "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
+    "apparent_l1":            {"address": 2552, "label": "Moc pozorna L1", "unit": "VA", "group": "power", "decimals": 0},
+    "pf_l1":                  {"address": 2560, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "phase_angle_l1":         {"address": 2570, "label": "Kąt fazowy L1", "unit": "°", "group": "system", "decimals": 1},
+    "phase_angle_total":      {"address": 2576, "label": "Kąt fazowy Σ", "unit": "°", "group": "system", "decimals": 1},
+    "frequency":              {"address": 2584, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
+    "thd_i_l1":               {"address": 2588, "label": "THD I L1", "unit": "%", "group": "thd", "decimals": 1},
+    "thd_v_l1":               {"address": 2594, "label": "THD U L1", "unit": "%", "group": "thd", "decimals": 1},
+    "temperature":            {"address": 2658, "label": "Temperatura", "unit": "°C", "group": "system", "decimals": 1},
+    "energy_import":          {"address": 2752, "scale": 0.001, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_reactive_import": {"address": 2754, "scale": 0.001, "label": "Energia bierna pobrana", "unit": "kvarh", "group": "energy", "decimals": 2},
+    "energy_export":          {"address": 2756, "scale": 0.001, "label": "Energia oddana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_reactive_export": {"address": 2758, "scale": 0.001, "label": "Energia bierna oddana", "unit": "kvarh", "group": "energy", "decimals": 2}
+  }
+}

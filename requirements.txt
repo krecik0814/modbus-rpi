@@ -1,0 +1,8 @@
+# Wymagane
+flask>=2.2
+pymodbus>=3.6,<4
+# RS-485 / port szeregowy (Raspberry Pi HAT, adapter USB)
+pyserial>=3.4
+# Opcjonalne:
+#   paho-mqtt>=1.6   - publikacja do MQTT / Home Assistant
+#   waitress>=2.1    - wydajniejszy serwer HTTP zamiast serwera deweloperskiego Flask

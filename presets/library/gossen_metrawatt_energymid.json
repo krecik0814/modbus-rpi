@@ -1,0 +1,362 @@
+{
+  "name": "Gossen Metrawatt ENERGYMID",
+  "manufacturer": "Gossen Metrawatt",
+  "model": "EM2281 / EM2289 / EM2381 / EM2387 / EM2389 (U228x-W7 / U238x-W7)",
+  "description": "Liczniki MID ENERGYMID EM2281/EM2289 (podłączenie bezpośrednie) i EM2381/EM2387/EM2389 (przez przekładniki), rejestry FC04 adresowane od 0. Napięcia, prądy i moce to mantysy int16 mnożone przez 10^wykładnik z rejestrów 12, 108 i 212 (wykładnik int8 w młodszym bajcie; mantysa 0x8000 = brak wartości), energie to uint32 w Wh mnożone przez współczynnik energii pierwotnej z rejestru 308. Wartości primarne (po przekładnikach). Dla wersji 1-fazowych (EM2281, EM2381) wartości faz L2/L3 pozostaną puste. THD (rejestry 8-10, 105-107) pominięto - dokumentacja nie podaje jednostki.",
+  "phases": 3,
+  "source": "Gossen Metrawatt ENERGYMID Modbus RTU, rozdz. 3.3 i 4.1 (http://datenblatt.stark-elektronik.de/em2281-em2389-modbus-rtu.pdf); mbmd meters/rs485/energymid.go (github.com/volkszaehler/mbmd); warianty: https://www.gossenmetrawattusa.com/media/88847/em2281-em2389-ba_gb.pdf",
+  "register_type": "input",
+  "byte_order": "ABCD",
+  "data_type": "int16",
+  "probe": "voltage_l1",
+  "registers": {
+    "voltage_l12": {
+      "address": 0,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_voltage",
+      "unit": "V",
+      "decimals": 1,
+      "group": "line_volt",
+      "label": "Napięcie L1-L2"
+    },
+    "voltage_l23": {
+      "address": 1,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_voltage",
+      "unit": "V",
+      "decimals": 1,
+      "group": "line_volt",
+      "label": "Napięcie L2-L3"
+    },
+    "voltage_l31": {
+      "address": 2,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_voltage",
+      "unit": "V",
+      "decimals": 1,
+      "group": "line_volt",
+      "label": "Napięcie L3-L1"
+    },
+    "voltage_ll_avg": {
+      "address": 3,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_voltage",
+      "unit": "V",
+      "decimals": 1,
+      "group": "line_volt",
+      "label": "Napięcie międzyfazowe śr."
+    },
+    "voltage_l1": {
+      "address": 4,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_voltage",
+      "unit": "V",
+      "decimals": 1,
+      "group": "voltage",
+      "label": "Napięcie L1"
+    },
+    "voltage_l2": {
+      "address": 5,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_voltage",
+      "unit": "V",
+      "decimals": 1,
+      "group": "voltage",
+      "label": "Napięcie L2"
+    },
+    "voltage_l3": {
+      "address": 6,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_voltage",
+      "unit": "V",
+      "decimals": 1,
+      "group": "voltage",
+      "label": "Napięcie L3"
+    },
+    "voltage_ln_avg": {
+      "address": 7,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_voltage",
+      "unit": "V",
+      "decimals": 1,
+      "group": "voltage",
+      "label": "Napięcie fazowe śr."
+    },
+    "frequency": {
+      "address": 11,
+      "type": "uint16",
+      "scale": 0.01,
+      "unit": "Hz",
+      "decimals": 2,
+      "group": "system",
+      "label": "Częstotliwość"
+    },
+    "exponent_voltage": {
+      "address": 12,
+      "type": "int8",
+      "unit": "",
+      "decimals": 0,
+      "group": "other",
+      "label": "Wykładnik napięć (10^n)"
+    },
+    "current_l1": {
+      "address": 100,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_current",
+      "unit": "A",
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd L1"
+    },
+    "current_l2": {
+      "address": 101,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_current",
+      "unit": "A",
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd L2"
+    },
+    "current_l3": {
+      "address": 102,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_current",
+      "unit": "A",
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd L3"
+    },
+    "current_avg": {
+      "address": 103,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_current",
+      "unit": "A",
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd śr."
+    },
+    "current_n": {
+      "address": 104,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_current",
+      "unit": "A",
+      "decimals": 2,
+      "group": "current",
+      "label": "Prąd N"
+    },
+    "exponent_current": {
+      "address": 108,
+      "type": "int8",
+      "unit": "",
+      "decimals": 0,
+      "group": "other",
+      "label": "Wykładnik prądów (10^n)"
+    },
+    "power_l1": {
+      "address": 200,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_power",
+      "unit": "W",
+      "decimals": 0,
+      "group": "power",
+      "label": "Moc czynna L1"
+    },
+    "power_l2": {
+      "address": 201,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_power",
+      "unit": "W",
+      "decimals": 0,
+      "group": "power",
+      "label": "Moc czynna L2"
+    },
+    "power_l3": {
+      "address": 202,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_power",
+      "unit": "W",
+      "decimals": 0,
+      "group": "power",
+      "label": "Moc czynna L3"
+    },
+    "power_total": {
+      "address": 203,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_power",
+      "unit": "W",
+      "decimals": 0,
+      "group": "total",
+      "label": "Moc czynna Σ"
+    },
+    "reactive_l1": {
+      "address": 204,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_power",
+      "unit": "var",
+      "decimals": 0,
+      "group": "power",
+      "label": "Moc bierna L1"
+    },
+    "reactive_l2": {
+      "address": 205,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_power",
+      "unit": "var",
+      "decimals": 0,
+      "group": "power",
+      "label": "Moc bierna L2"
+    },
+    "reactive_l3": {
+      "address": 206,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_power",
+      "unit": "var",
+      "decimals": 0,
+      "group": "power",
+      "label": "Moc bierna L3"
+    },
+    "reactive_total": {
+      "address": 207,
+      "invalid": [
+        -32768
+      ],
+      "scale_from": "exponent_power",
+      "unit": "var",
+      "decimals": 0,
+      "group": "total",
+      "label": "Moc bierna Σ"
+    },
+    "pf_l1": {
+      "address": 208,
+      "scale": 0.001,
+      "unit": "",
+      "decimals": 3,
+      "group": "pf",
+      "label": "cos φ L1"
+    },
+    "pf_l2": {
+      "address": 209,
+      "scale": 0.001,
+      "unit": "",
+      "decimals": 3,
+      "group": "pf",
+      "label": "cos φ L2"
+    },
+    "pf_l3": {
+      "address": 210,
+      "scale": 0.001,
+      "unit": "",
+      "decimals": 3,
+      "group": "pf",
+      "label": "cos φ L3"
+    },
+    "pf_total": {
+      "address": 211,
+      "scale": 0.001,
+      "unit": "",
+      "decimals": 3,
+      "group": "pf",
+      "label": "cos φ Σ"
+    },
+    "exponent_power": {
+      "address": 212,
+      "type": "int8",
+      "unit": "",
+      "decimals": 0,
+      "group": "other",
+      "label": "Wykładnik mocy (10^n)"
+    },
+    "energy_import": {
+      "address": 300,
+      "type": "uint32",
+      "scale": 0.001,
+      "scale_from": "energy_factor",
+      "scale_from_mode": "multiply",
+      "unit": "kWh",
+      "decimals": 2,
+      "group": "energy",
+      "label": "Energia pobrana"
+    },
+    "energy_export": {
+      "address": 302,
+      "type": "uint32",
+      "scale": 0.001,
+      "scale_from": "energy_factor",
+      "scale_from_mode": "multiply",
+      "unit": "kWh",
+      "decimals": 2,
+      "group": "energy",
+      "label": "Energia oddana"
+    },
+    "energy_reactive_import": {
+      "address": 304,
+      "type": "uint32",
+      "scale": 0.001,
+      "scale_from": "energy_factor",
+      "scale_from_mode": "multiply",
+      "unit": "kvarh",
+      "decimals": 2,
+      "group": "energy",
+      "label": "Energia bierna pobrana"
+    },
+    "energy_reactive_export": {
+      "address": 306,
+      "type": "uint32",
+      "scale": 0.001,
+      "scale_from": "energy_factor",
+      "scale_from_mode": "multiply",
+      "unit": "kvarh",
+      "decimals": 2,
+      "group": "energy",
+      "label": "Energia bierna oddana"
+    },
+    "energy_factor": {
+      "address": 308,
+      "type": "uint32",
+      "unit": "",
+      "decimals": 0,
+      "group": "other",
+      "label": "Współczynnik energii pierwotnej (Wh/jedn.)"
+    }
+  }
+}

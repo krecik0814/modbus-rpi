@@ -1,0 +1,24 @@
+{
+  "name": "Orno OR-WE-504",
+  "manufacturer": "Orno",
+  "model": "OR-WE-504",
+  "description": "Prosty licznik 1-fazowy z RS-485 (Modbus RTU). Rejestry holding FC03, liczby całkowite bez znaku big-endian: pomiary 16-bit (moc maks. 65535 W), energie 32-bit w Wh/varh przeliczane na kWh/kvarh.",
+  "phases": 1,
+  "source": "mbmd meters/rs485/orno1p504.go (github.com/volkszaehler/mbmd); ustawienia portu: mbmd README.md (ORNO WE-504/514/515: 9600 8E1, ID 1)",
+  "register_type": "holding",
+  "byte_order": "ABCD",
+  "data_type": "uint16",
+  "serial": {"baudrate": 9600, "parity": "E", "stopbits": 1},
+  "probe": "voltage_l1",
+  "registers": {
+    "voltage_l1":            {"address": 0, "scale": 0.1, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":            {"address": 1, "scale": 0.1, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "frequency":             {"address": 2, "scale": 0.1, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
+    "power_l1":              {"address": 3, "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "reactive_l1":           {"address": 4, "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
+    "apparent_l1":           {"address": 5, "label": "Moc pozorna L1", "unit": "VA", "group": "power", "decimals": 0},
+    "pf_l1":                 {"address": 6, "scale": 0.001, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "energy_total":          {"address": 7, "type": "uint32", "scale": 0.001, "label": "Energia całkowita", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_reactive_total": {"address": 9, "type": "uint32", "scale": 0.001, "label": "Energia bierna całkowita", "unit": "kvarh", "group": "energy", "decimals": 2}
+  }
+}
