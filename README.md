@@ -34,8 +34,7 @@ z nakładką RS-485, adaptera USB-RS485 albo bramki Ethernet. Bez chmury, bez ze
 15. [Rozwiązywanie problemów](#rozwiązywanie-problemów)
 16. [API REST](#api-rest)
 17. [Architektura](#architektura)
-18. [Rozwój i testy](#rozwój-i-testy)
-19. [Zmiany w wersji 3](#zmiany-w-wersji-3)
+18. [Zmiany w wersji 3](#zmiany-w-wersji-3)
 
 ---
 
@@ -253,10 +252,9 @@ Dzięki nim działa symulator, kolory faz, Home Assistant (klasy urządzeń) i r
 
 ## Obsługiwane liczniki
 
-Tabela generowana z biblioteki (`python tools/meters_table.py --readme`). Kolumna *Port (fabr.)* pokazuje
-ustawienia fabryczne tylko wtedy, gdy potwierdza je dokumentacja - zawsze sprawdź ustawienia w menu licznika.
+Tabela odpowiada presetom z katalogu `presets/library`. Kolumna *Port (fabr.)* pokazuje ustawienia fabryczne
+tylko wtedy, gdy potwierdza je dokumentacja - zawsze sprawdź ustawienia w menu licznika.
 
-<!-- METERS_TABLE_START -->
 | Producent | Model | Fazy | Rejestry | Typy danych | Kolejność | Port (fabr.) | Wartości | Preset |
 |---|---|---|---|---|---|---|---|---|
 | ABB | A43 / A44 / B23 / B24 (wersje z RS-485 Modbus), także 1-fazowy B21 | 3 | Holding (FC03) | int16, int32, int64, uint16, uint32, uint64 | ABCD | - | 46 | `abb_a43_a44_b23_b24` |
@@ -301,7 +299,6 @@ ustawienia fabryczne tylko wtedy, gdy potwierdza je dokumentacja - zawsze sprawd
 | Socomec | Countis E33 / E43 (rodzina E3x / E4x z tablicą JBUS common) | 3 | Holding (FC03) | int32, uint32 | ABCD | - | 35 | `socomec_countis_e3x_e4x` |
 | SolarEdge | SE-MTR-3Y; ta sama mapa rejestrów: WattNode WNC-3Y/3D-xxx-MB (np. SE-WNC-3Y-400-MB-K1) | 3 | Input (FC04) | float32 | CDAB | - | 50 | `solaredge_se_mtr_3y` |
 | WAGO | 879-3000 (4PU) / 879-3020 (4PS) / 879-3040 (2PU CT) | 3 | Holding (FC03) | float32 | ABCD | 9600 8E1 | 47 | `wago_879_30x0` |
-<!-- METERS_TABLE_END -->
 
 Mapy rejestrów oparto głównie na projekcie [mbmd](https://github.com/volkszaehler/mbmd) (licencja BSD-3) oraz
 dokumentacji producentów (źródło w polu `source` każdego presetu). Brakuje Twojego licznika? Zeskanuj go skanerem,
@@ -529,19 +526,14 @@ curl -s http://raspberrypi.local:5000/api/devices/cli/values | jq .values
 | `transport.py` | jedno trwałe połączenie na magistralę, blokada, ponowienia, zgodność z pymodbus 3.6-3.15 |
 | `poller.py` | odczyty w tle, bufor ostatnich wartości i historii |
 | `heuristics.py` | podpowiedzi skanera, propozycje presetów, ocena wiarygodności |
+| `scanner.py` | skan zakresów, szukanie Unit ID, rozpoznawanie modelu (zadania w tle) |
+| `history.py` | historia w SQLite (średnia/min/maks z przedziałów) |
+| `mqtt.py` | publikacja MQTT i discovery Home Assistant |
+| `metrics.py` | metryki Prometheus |
+| `quantities.py` | klucze kanoniczne wielkości, jednostki, klasy Home Assistant |
 | `simulator.py` | serwer Modbus TCP / RTU-over-TCP / RTU (port szeregowy) z modelem fizycznym |
 | `config.py` | `data/config.json`: magistrale, urządzenia, MQTT, historia |
-
-## Rozwój i testy
-
-```bash
-pip install -r requirements-dev.txt
-python -m pytest -q
-```
-
-Testy obejmują kodek (wszystkie typy × kolejności), presety (walidacja, path traversal), planer (dzielenie bloków),
-symulator, transport (TCP, RTU-over-TCP, RS-485 przez pseudoterminal, timeouty, współbieżność), skaner, poller,
-historię i API (Flask test client + symulator). Testy transportu i symulatora przechodzą na pymodbus 3.6.9 - 3.15.0.
+| `web.py` | aplikacja Flask: interfejs i REST API |
 
 ## Zmiany w wersji 3
 
