@@ -141,9 +141,9 @@ def scan_units(job, bus, first, last, function, address, count, timeout):
     units = list(range(first, last + 1))
     job.progress(0, len(units), "Szukanie urządzeń...")
     found = []
-    # brak odpowiedzi to tu norma - bez długiego czekania na spóźnione odpowiedzi
-    # (odpowiedź innego urządzenia odrzuca kontrola Unit ID w transporcie)
-    with quick(bus, timeout, settle=0.05):
+    # po timeoucie transport krótko czeka na spóźnioną odpowiedź (ERROR_SETTLE) - pymodbus >= 3.8
+    # odrzuca ramkę innego Unit ID razem z właściwą odpowiedzią, więc nie wolno tego skracać
+    with quick(bus, timeout):
         for i, unit in enumerate(units):
             if job.cancelled:
                 break

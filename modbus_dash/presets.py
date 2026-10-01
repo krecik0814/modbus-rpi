@@ -112,10 +112,17 @@ def _number(value, name, errors, where, default):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         errors.append(f"{where}: '{name}' musi być liczbą")
         return default
-    if not math.isfinite(value):  # json przyjmuje NaN/Infinity, przeglądarka już nie
+    if not _finite(value):  # json przyjmuje NaN/Infinity i ogromne liczby, przeglądarka już nie
         errors.append(f"{where}: '{name}' musi być skończoną liczbą")
         return default
     return value
+
+
+def _finite(value):
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def normalize_preset(data):
@@ -206,7 +213,7 @@ def normalize_preset(data):
         invalid = spec.get("invalid", [])
         if not isinstance(invalid, list):
             invalid = [invalid]
-        if any(isinstance(x, bool) or not isinstance(x, (int, float)) or math.isnan(x) for x in invalid):
+        if any(isinstance(x, bool) or not isinstance(x, (int, float)) or not _finite(x) for x in invalid):
             errors.append(f"{where}: 'invalid' musi być liczbą lub listą liczb")
             invalid = []
         # porównujemy jako float: JSON z przeglądarki gubi precyzję dużych liczb 64-bit

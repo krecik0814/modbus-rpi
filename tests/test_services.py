@@ -312,3 +312,62 @@ def test_config_store_types_and_listeners_outside_lock(tmp_path):
     data["history"]["memory_points"] = 5
     (tmp_path / "c.json").write_text(_json.dumps(data), encoding="utf-8")
     assert ConfigStore(tmp_path / "c.json").get()["history"]["memory_points"] == 3600
+
+
+def test_config_load_is_lenient_per_field(tmp_path, caplog):
+    import json as _json
+    from modbus_dash.config import ConfigStore
+    path = tmp_path / "config.json"
+    path.write_text(_json.dumps({
+        "buses": {"default": {"kind": "tcp", "host": "127.0.0.1"}},
+        "devices": {"a": {"bus": "default", "enabled": 1}, "b": {"bus": "default", "enabled": "nie"},
+                    "c": {"bus": "default", "enabled": "???"}},
+        "mqtt": {"enabled": True, "host": "broker.lan", "username": "ha", "password": "S3cret", "interval": 5000},
+        "history": {"memory_points": 5, "retention_days": 7},
+    }), encoding="utf-8")
+    cfg = ConfigStore(path).get()
+    assert {k: v["enabled"] for k, v in cfg["devices"].items()} == {"a": True, "b": False, "c": True}
+    m = cfg["mqtt"]
+    assert (m["host"], m["password"], m["enabled"], m["interval"]) == ("broker.lan", "S3cret", True, 10)
+    assert cfg["history"]["retention_days"] == 7 and cfg["history"]["memory_points"] == 3600
+    assert (tmp_path / "config.json.bak").is_file()
+
+
+def test_reader_recovers_after_transient_error_while_splitting():
+    from conftest import FakeModbusError
+    p = normalize_preset_for_test({"v1": {"address": 0}, "v2": {"address": 2}, "v3": {"address": 4},
+                                   "f": {"address": 10}})
+
+    class Flaky(FakeBus):
+        fail = {"timeout": 1}
+
+        def read_registers(self, unit, function, address, count):
+            if count < 12 and self.fail.get("timeout"):
+                self.fail["timeout"] -= 1
+                self.calls.append((unit, function, address, count))
+                raise FakeModbusError("timeout", msg="Brak odpowiedzi (timeout)")
+            return super().read_registers(unit, function, address, count)
+    bus = Flaky(strict=True)
+    for a in (0, 2, 4, 10):
+        bus.put("input", a, codec.encode(float(a + 1), "float32"))
+    reader = PresetReader(p)
+    assert not reader.read(bus, 1)["ok"]
+    assert not any(b.rejected for b in reader.blocks)
+    res = reader.read(bus, 1)
+    assert res["ok"] and res["values"] == {"v1": 1.0, "v2": 3.0, "v3": 5.0, "f": 11.0}
+
+
+def normalize_preset_for_test(regs):
+    from modbus_dash.presets import normalize_preset
+    return normalize_preset({"registers": regs})
+
+
+def test_device_switched_to_missing_preset_drops_old_metadata(setup):
+    store, bus, cfg, poller = setup
+    poller.reload()
+    poller.read_now("d1")
+    assert poller.values("d1")["preset"]["id"] == "m"
+    cfg.data["devices"]["d1"]["preset"] = "literowka"
+    poller.reload()
+    v = poller.values("d1")
+    assert v["preset"] is None and not v["meta"] and v["status"]["state"] == "no_preset"

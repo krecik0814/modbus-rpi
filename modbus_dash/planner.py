@@ -149,6 +149,7 @@ class PresetReader:
         if st.fatal is not None:
             for k in block.keys:
                 st.errors[k] = st.fatal
+            st.transient = True
             return [block], False
         st.requests += 1
         try:
@@ -159,15 +160,21 @@ class PresetReader:
             if kind == "exception" and code not in _TRANSIENT_CODES and len(block.keys) > 1 \
                     and not block.rejected:
                 # licznik odrzucił zakres - podziel; podział zostaje w planie tylko, gdy pomógł
-                parts, ok = [], False
+                parts, ok, outer = [], False, st.transient
+                st.transient = False
                 for part in split_block(block, self.registers):
                     got, part_ok = self._read_block(bus, unit, part, st)
                     parts += got
                     ok = ok or part_ok
                 if ok:
+                    st.transient = outer
                     return parts, True
-                block.rejected = True
+                if not st.transient:
+                    block.rejected = True  # licznik odrzucił każdą część - czytamy w całości
+                st.transient = st.transient or outer
                 return [block], False
+            if kind != "exception" or code in _TRANSIENT_CODES:
+                st.transient = True  # timeout, błąd ramki, "zajęte" - nie świadczy o mapie rejestrów
             msg = str(e) or kind
             for k in block.keys:
                 st.errors[k] = msg
@@ -204,3 +211,4 @@ class _ReadState:
         self.exact = {}         # niezaokrąglone wartości rejestrów skali
         self.requests = 0
         self.fatal = None
+        self.transient = False  # część odczytu nie powiodła się z przyczyn chwilowych

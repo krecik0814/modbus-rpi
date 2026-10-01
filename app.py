@@ -192,6 +192,7 @@ class AppContext:
         defaults = {"buses": {"default": {"name": "Domyślna", "kind": "tcp", "host": "127.0.0.1", "port": 502}}}
         self.config = ConfigStore(self.data_dir / "config.json", defaults, build_overrides(args))
         self.buses = BusManager()
+        self._bus_keys = self._bus_keys_now()   # łącza z konfiguracji (zwalniane po usunięciu/zmianie)
         self.poller = Poller(self.config, self.presets, self.buses, PresetReader, TransportConfig)
         self.jobs = JobManager()
         self.history = None
@@ -230,16 +231,21 @@ class AppContext:
         if section in ("mqtt", "devices"):
             self.mqtt.apply()
 
-    def _retain_buses(self):
-        """Usunięta albo zmieniona magistrala od razu zwalnia port (nie po 5 min bezczynności)."""
+    def _bus_keys_now(self):
         from modbus_dash.transport import TransportConfig
-        keys = []
+        keys = set()
         for cfg in self.config.get()["buses"].values():
             try:
-                keys.append(TransportConfig.from_dict(cfg).key())
+                keys.add(TransportConfig.from_dict({k: v for k, v in cfg.items() if k not in ("name", "locked")}).key())
             except ValueError:
                 continue
-        self.buses.retain(keys)
+        return keys
+
+    def _retain_buses(self):
+        """Usunięta albo zmieniona magistrala od razu zwalnia port (nie po 5 min bezczynności)."""
+        keys = self._bus_keys_now()
+        removed, self._bus_keys = self._bus_keys - keys, keys
+        self.buses.retain(keys, removed=removed)
 
     def _start_simulator(self, args):
         from modbus_dash.presets import PresetError
@@ -322,9 +328,10 @@ def main(argv=None):
             app.run(host=args.host, port=args.port, debug=args.debug, use_reloader=False, threaded=True)
         else:
             # limit rozmiaru zapytania już w waitress: bez niego buforuje do 1 GB na dysku,
-            # zanim Flask sprawdzi logowanie i MAX_CONTENT_LENGTH
+            # zanim Flask sprawdzi logowanie i MAX_CONTENT_LENGTH; treść do limitu trzymamy w RAM
+            limit = app.config["MAX_CONTENT_LENGTH"]
             serve(app, host=args.host, port=args.port, threads=8, ident="modbus-dash",
-                  max_request_body_size=app.config["MAX_CONTENT_LENGTH"], connection_limit=20)
+                  max_request_body_size=limit, inbuf_overflow=limit + 65536, connection_limit=20)
     except KeyboardInterrupt:
         pass
     finally:

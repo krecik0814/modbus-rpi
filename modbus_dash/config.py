@@ -7,12 +7,16 @@ Flagi CLI (--serial itp.) nadpisują magistralę "default" tylko w pamięci.
 
 import copy
 import json
+import logging
 import math
 import os
 import re
+import shutil
 import tempfile
 import threading
 from pathlib import Path
+
+log = logging.getLogger("modbus-dash.config")
 
 ID_RE = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,31}$")
 
@@ -78,6 +82,44 @@ def validate_device(dev_id, data, buses):
     }
 
 
+def _finite(v):
+    """Liczba (bez bool) skończona; bardzo duże liczby całkowite z JSON też odpadają."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:
+        return False
+
+
+def _as_bool(v):
+    """Wartość logiczna z ręcznie edytowanego pliku: true/false, 1/0, "tak"/"nie"... albo None."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)) and v in (0, 1):
+        return bool(v)
+    if isinstance(v, str):
+        return {"true": True, "1": True, "tak": True, "yes": True, "on": True,
+                "false": False, "0": False, "nie": False, "no": False, "off": False}.get(v.strip().lower())
+    return None
+
+
+def _lenient(validator, data, where, dropped):
+    """Sekcja z pliku: pole spoza zakresu wraca do wartości domyślnej, reszta zostaje."""
+    try:
+        return validator(data)
+    except ConfigError:
+        pass
+    good = {}
+    for k, v in (data or {}).items() if isinstance(data, dict) else ():
+        try:
+            validator({**good, k: v})
+            good[k] = v
+        except ConfigError as e:
+            dropped.append(f"{where}.{k}: {e}")
+    return validator(good)
+
+
 def _merge(defaults, data, strict=False):
     """Uzupełnia brakujące pola wartościami domyślnymi. strict=True: błędny typ -> ConfigError."""
     out = dict(defaults)
@@ -86,12 +128,12 @@ def _merge(defaults, data, strict=False):
             if k not in defaults or v is None:
                 continue
             d = defaults[k]
-            number = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+            number = _finite(v)
             if isinstance(d, bool):
                 ok = isinstance(v, bool)
             elif isinstance(d, int):
                 # 3600.0 z serializatora JSON -> 3600; 3600.5 to błąd (deque(maxlen=...) wymaga int)
-                ok = number and float(v).is_integer()
+                ok = number and (isinstance(v, int) or v.is_integer())
                 v = int(v) if ok else v
             elif isinstance(d, float):
                 ok = number
@@ -173,20 +215,29 @@ class ConfigStore:
                 continue
         if "default" not in buses:
             buses["default"] = validate_bus("default", (base.get("buses") or {}).get("default", {"kind": "tcp"}))
-        devices = {}
+        devices, dropped = {}, []
         for did, d in (data.get("devices") or {}).items():
+            if isinstance(d, dict) and "enabled" in d and not isinstance(d["enabled"], bool):
+                # ręczna edycja pliku: "enabled": 1 / "nie" - rozumiemy, zamiast gubić urządzenie
+                flag = _as_bool(d["enabled"])
+                d = {**d, "enabled": True if flag is None else flag}
             try:
                 # magistrala może istnieć tylko przy części uruchomień (np. "sim" z CLI) - urządzenie
                 # zostaje w konfiguracji i pokaże błąd, zamiast zniknąć przy następnym zapisie
                 devices[did] = validate_device(did, d, _AnyBus())
-            except ConfigError:
-                continue
-        sections = {}
-        for name, validator in (("mqtt", validate_mqtt), ("history", validate_history)):
+            except ConfigError as e:
+                dropped.append(str(e))
+        # pole spoza zakresu (ręczna edycja pliku) wraca do domyślnego, reszta sekcji zostaje
+        sections = {name: _lenient(validator, data.get(name), name, dropped)
+                    for name, validator in (("mqtt", validate_mqtt), ("history", validate_history))}
+        if dropped and self.path.is_file():
+            backup = self.path.with_suffix(".json.bak")
             try:
-                sections[name] = validator(data.get(name))
-            except ConfigError:  # wartość spoza zakresu (ręczna edycja pliku) - nie blokuje startu
-                sections[name] = validator(None)
+                shutil.copy2(self.path, backup)
+            except OSError:
+                backup = None
+            log.warning("config.json: pominięto niepoprawne wpisy (%s)%s", "; ".join(dropped),
+                        f" - kopia pliku: {backup}" if backup else "")
         return {"version": 1, "buses": buses, "devices": devices, **sections}
 
     # ── odczyt ─────────────────────────────────────────────────
@@ -224,6 +275,11 @@ class ConfigStore:
             except OSError:
                 pass
             raise
+
+    @property
+    def write_lock(self):
+        """Blokada zapisów: odczyt + sprawdzenie + zapis wykonane razem (np. hasło MQTT)."""
+        return self._write_lock
 
     def _notify(self, section):
         for fn in list(self._listeners):

@@ -177,11 +177,13 @@ class Poller:
             preset, rt.preset_error = None, f"preset '{pid}' jest niepoprawny: {e}"
         except Exception as e:  # noqa: BLE001 - zły plik użytkownika nie może zatrzymać odpytywania
             preset, rt.preset_error = None, f"nie można wczytać presetu '{pid}': {e}"
+        # ostatni dobry preset (metadane, historia) zostaje tylko, gdy to wciąż ten sam preset
+        keep = rt.preset is not None and rt.preset.get("id") == pid
         try:
-            return rt.set_preset(preset, self.reader_factory, keep=True)
+            return rt.set_preset(preset, self.reader_factory, keep=keep)
         except Exception as e:  # noqa: BLE001 - np. błąd planowania odczytów
             rt.preset_error = f"preset '{pid}': {e}"
-            return rt.set_preset(None, self.reader_factory, keep=True)
+            return rt.set_preset(None, self.reader_factory, keep=keep)
 
     # ── pętla odpytywania ──────────────────────────────────────
     def _bus_for(self, bus_id):

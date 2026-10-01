@@ -240,3 +240,36 @@ def test_stale_discovery_is_swept_and_disabled_device_is_offline(broker):
     finally:
         pub.stop()
         col.stop()
+
+
+def test_malformed_retained_discovery_does_not_kill_client(broker):
+    from types import SimpleNamespace
+    if hasattr(paho, "CallbackAPIVersion"):
+        evil = paho.Client(paho.CallbackAPIVersion.VERSION2, client_id="evil-pub")
+    else:
+        evil = paho.Client(client_id="evil-pub")
+    evil.connect("127.0.0.1", broker)
+    evil.loop_start()
+    for i, payload in enumerate(('{"device":{"identifiers":[["a"]]}}', '{"availability":5}', "[1,2]",
+                                 '{"device":' * 2000)):
+        evil.publish(f"homeassistant/sensor/bad/x{i}_y/config", payload, qos=1, retain=True).wait_for_publish(2)
+    evil.loop_stop()
+    evil.disconnect()
+    cfg = FakeConfig(broker)
+    cfg.data["mqtt"]["topic_prefix"] = "bad"
+    col = Collector(broker, "bad/#")
+    pub = MqttPublisher(cfg, Poller2(["m1", "off"]))
+    try:
+        pub.apply()
+        assert _connected(pub)
+        time.sleep(1.0)  # zepsute wiadomości retained już dotarły
+        pub.on_sample("m1", None, {"ok": True, "ts": time.time(), "values": {"voltage_l1": 231.0}})
+        assert col.wait(lambda g: '"voltage_l1":231.0' in g.get("bad/m1/state", "")), col.got
+        # wyłączone urządzenie: ręczny odczyt nie przywraca "online"
+        off = SimpleNamespace(cfg={"enabled": False}, reader=object(), preset_error=None)
+        pub.on_sample("off", off, {"ok": True, "ts": time.time(), "values": {"voltage_l1": 230.0}})
+        assert col.wait(lambda g: g.get("bad/off/availability") == "offline")
+        assert "bad/off/state" not in col.got
+    finally:
+        pub.stop()
+        col.stop()

@@ -69,6 +69,7 @@ MAX_DELAY_MS = 5000
 BAUD_RANGE = (300, 4_000_000)
 
 RECOVERY_GAP = 0.05     # s ciszy kończącej odrzucanie spóźnionych odpowiedzi (ramki RTU)
+ERROR_SETTLE = 0.1      # s czekania na spóźnioną odpowiedź po timeoucie/błędzie ramki (ramki RTU)
 CLOSE_WAIT = 2.0        # s czekania na trwające zapytanie przy zamykaniu
 IDLE_CLOSE = 300.0      # s bezczynności, po których zamykamy połączenie
 IDLE_DROP = 3600.0      # s bezczynności, po których BusManager zapomina magistralę
@@ -152,7 +153,7 @@ def _as_float(value, msg):
         raise ValueError(msg)
     try:
         v = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise ValueError(msg) from None
     if not math.isfinite(v):
         raise ValueError(msg)
@@ -273,12 +274,16 @@ class TransportConfig:
         host = f"[{self.host}]" if ":" in self.host else self.host
         return f"{host}:{self.port}"
 
+    def _port_id(self):
+        """Port szeregowy bez aliasów (/dev/serial0 -> /dev/ttyAMA0, /dev/serial/by-id/... -> /dev/ttyUSB0)."""
+        port = self.serial_port
+        return os.path.realpath(port) if port.startswith("/") else port
+
     def key(self):
         """Tożsamość fizycznego łącza: ten sam port szeregowy dla RTU i ASCII to jedna magistrala,
-        także pod inną nazwą (/dev/serial0 -> /dev/ttyAMA0, /dev/serial/by-id/... -> /dev/ttyUSB0)."""
+        także pod inną nazwą."""
         if self.is_serial:
-            port = self.serial_port
-            return f"serial:{os.path.realpath(port) if port.startswith('/') else port}"
+            return f"serial:{self._port_id()}"
         return f"{self.kind}:{self._hostport()}"
 
     def describe(self):
@@ -292,7 +297,7 @@ class TransportConfig:
     def link(self):
         """Parametry, których zmiana wymaga ponownego otwarcia łącza (reszta zmienia się w locie)."""
         if self.is_serial:
-            return (self.kind, self.serial_port, self.baudrate, self.parity, self.stopbits, self.bytesize,
+            return (self.kind, self._port_id(), self.baudrate, self.parity, self.stopbits, self.bytesize,
                     self.local_echo)
         return (self.kind, self.host, self.port)
 
@@ -517,7 +522,8 @@ class Bus:
         self._previous = _previous    # poprzednia instancja dla tego łącza (musi zwolnić port)
         self._retired = False
         self._interrupted = False     # close() z innego wątku przerwał trwające zapytanie
-        self._dirty = 0.0             # > 0: przed kolejną ramką odrzuć spóźnione odpowiedzi (maks. s czekania)
+        self._dirty = 0.0             # > 0: przed kolejną ramką odrzuć spóźnione odpowiedzi (czekając do tej chwili, monotonic)
+        self._late_risk = None        # (unit, monotonic): do tej chwili może przyjść spóźniona odpowiedź tego urządzenia
         self._spare_port = None       # otwarty port dla nowego klienta (po błędzie na RS-485)
         self._applied = None          # (timeout, id gniazda) ustawione w kliencie
         self._last_io = 0.0           # monotonic: koniec ostatniej ramki
@@ -631,8 +637,8 @@ class Bus:
     def override(self, timeout=None, retries=None, settle=None):
         """Tymczasowo inny timeout / liczba ponowień - tylko dla zapytań z bieżącego wątku.
 
-        settle: ile najwyżej czekać na spóźnione odpowiedzi po błędzie (domyślnie timeout);
-        krótsze np. przy szukaniu Unit ID, gdzie obce odpowiedzi odrzuca kontrola Unit ID.
+        settle: limit czekania na spóźnione odpowiedzi przed kolejną ramką (domyślnie wyliczany
+        z timeoutu); krótszy np. przy szukaniu Unit ID, gdzie obce odpowiedzi odrzuca kontrola Unit ID.
         """
         prev = getattr(self._local, "override", None)
         ov = dict(prev or {})
@@ -678,10 +684,13 @@ class Bus:
         ov = getattr(self._local, "override", None) or {}
         return ov.get("timeout", self.cfg.timeout), ov.get("retries", self.cfg.retries)
 
-    def _settle(self, timeout):
-        """Najdłuższe czekanie na spóźnioną odpowiedź przed kolejną ramką (ramki RTU)."""
+    def _settle(self, deadline):
+        """Przed kolejną ramką odrzuć spóźnione odpowiedzi, czekając na nie najwyżej do `deadline`
+        (monotonic, liczone od końca nieudanej wymiany); limit czekania z override(settle=...)."""
         ov = getattr(self._local, "override", None) or {}
-        return ov.get("settle", timeout)
+        if "settle" in ov:
+            deadline = min(deadline, self._last_io + ov["settle"])
+        self._dirty = max(self._dirty, deadline, self._last_io)
 
     def _ru(self, unit):
         """Unit ID do sprawdzenia w odpowiedzi: tylko ramki RTU/ASCII (adres jest częścią ramki)."""
@@ -704,13 +713,18 @@ class Bus:
     def _execute(self, unit, op):
         """op(client, unit_kwargs) z ponowieniami; zwraca wynik op albo rzuca ModbusError."""
         timeout, retries = self._settings()
-        settle = self._settle(timeout)
         kw = {_pm()["unit_kw"]: unit}
         with self.lock:
             self._check_open()
             self._interrupted = False
             t_start = self._used = time.monotonic()
-            attempt, stale_retry, resyncs, timed_out = 0, True, 0, False
+            attempt, stale_retry, resyncs, first_lost = 0, True, 0, None
+            risk, self._late_risk = self._late_risk, None
+            if risk and risk[0] == unit and risk[1] > t_start:
+                # zaraz po timeoucie to samo urządzenie: jego spóźniona odpowiedź (ta sama funkcja
+                # i długość, bez numeru transakcji) wyglądałaby jak odpowiedź na nowe zapytanie;
+                # inne urządzenia chroni kontrola Unit ID w odpowiedzi
+                self._settle(risk[1])
             while True:
                 reused = self._is_open(self._client)
                 t0 = time.monotonic()
@@ -724,10 +738,12 @@ class Bus:
                                                                               timeout, unit)
                 else:
                     self._last_io = time.monotonic()
-                    if timed_out and self.cfg.kind in RTU_FRAMED:
-                        # ponowienie mogło odebrać spóźnioną odpowiedź na wcześniejszą próbę -
-                        # odpowiedź na samo ponowienie przyjdzie później: odrzucamy ją
-                        self._dirty = max(self._dirty, settle)
+                    self._late_risk = None
+                    if first_lost is not None and self.cfg.kind in RTU_FRAMED:
+                        # ponowienie mogło odebrać spóźnioną odpowiedź na pierwszą próbę (te same
+                        # dane), a odpowiedź na ostatnią próbę przyjdzie o tyle później, o ile
+                        # później ją wysłaliśmy - przed kolejną ramką czekamy na nią i ją odrzucamy
+                        self._settle(self._last_io + t0 - first_lost + max(0.1, 0.25 * timeout))
                     self._record(t_start, None, attempt)
                     return result
                 self._last_io = time.monotonic()
@@ -736,8 +752,11 @@ class Bus:
                     self._close_client()
                     self._record(t_start, err, attempt)
                     raise err
-                timed_out = timed_out or err.kind == "timeout"
-                self._recover(err, settle)
+                if err.kind == "timeout":
+                    first_lost = t0 if first_lost is None else first_lost  # wysłanie pierwszej próby bez odpowiedzi
+                    if self.cfg.kind in RTU_FRAMED:
+                        self._late_risk = (unit, self._last_io + timeout)
+                self._recover(err, timeout)
                 transient = err.code is None and err.kind in ("timeout", "io", "connection") \
                     and not err.connect_failed
                 if transient and reused and stale_retry and err.kind != "timeout" \
@@ -772,14 +791,17 @@ class Bus:
         err.detail = detail
         return err
 
-    def _recover(self, err, settle):
+    def _recover(self, err, timeout):
         if err.code is not None:
             return  # urządzenie odpowiedziało wyjątkiem - łącze sprawne
         if self.cfg.kind in RTU_FRAMED and err.kind != "connection":
             # ramki RTU: spóźniona odpowiedź może jeszcze przyjść (także przez przezroczystą
             # bramkę RTU over TCP, która przekazuje bajty bieżącemu połączeniu) - przed
-            # kolejną ramką czekamy na nią i ją odrzucamy
-            self._dirty = max(self._dirty, settle)
+            # kolejną ramką czekamy na nią i ją odrzucamy. Po niepasującej odpowiedzi właściwa
+            # jeszcze nadchodzi (czekamy do timeoutu); po timeoucie krótko - spóźniona odpowiedź
+            # na ponowione zapytanie niesie te same dane, a jej duplikat odrzuca udane ponowienie
+            wait = timeout if getattr(err, "mismatch", False) else min(timeout, ERROR_SETTLE)
+            self._settle(self._last_io + wait)
             port = getattr(self._client, "socket", None)
             keep = self.cfg.is_serial and getattr(port, "is_open", False) \
                 or getattr(err, "mismatch", False) and isinstance(port, socket.socket)
@@ -798,13 +820,14 @@ class Bus:
         if wait > 0:
             time.sleep(wait)
         if self._dirty:
-            settle, self._dirty = self._dirty, 0.0
-            self._drain(getattr(client, "socket", None), settle)
+            deadline, self._dirty = self._dirty, 0.0
+            self._drain(getattr(client, "socket", None), deadline)
 
     @staticmethod
-    def _drain(sock, wait):
-        """Odrzuca zaległe bajty: czeka do `wait` s na spóźnioną odpowiedź, a po każdej porcji
-        danych do RECOVERY_GAP s ciszy. Łącznie najwyżej 2*wait + 1 s (ciągły ruch na magistrali)."""
+    def _drain(sock, deadline):
+        """Odrzuca zaległe bajty: czeka na spóźnioną odpowiedź do `deadline` (monotonic; minęło -
+        tylko RECOVERY_GAP), a po każdej porcji danych do RECOVERY_GAP s ciszy. Ciągły ruch na
+        magistrali nie zatrzyma odczytu na dłużej niż dwukrotność okna + 1 s."""
         if sock is None:
             return
         if isinstance(sock, socket.socket):
@@ -829,7 +852,8 @@ class Bus:
         else:
             take = None
         start = time.monotonic()
-        end, hard = start + max(wait, RECOVERY_GAP), start + 2 * wait + 1.0
+        end = max(deadline, start + RECOVERY_GAP)
+        hard = end + (end - start) + 1.0
         try:
             while take is not None:
                 left = min(end, hard) - time.monotonic()
@@ -1070,13 +1094,14 @@ class BusManager:
             old._retire()  # poza blokadą menedżera - może czekać na trwające zapytanie
         return bus
 
-    def retain(self, keys, grace=10.0):
-        """Zamyka magistrale spoza konfiguracji (usunięte albo zmienione łącze), żeby od razu
-        zwolniły port. Magistrale używane w ostatnich `grace` s (np. przycisk Test) zostają."""
-        keys, now, retired = set(keys), time.monotonic(), []
+    def retain(self, keys, grace=10.0, removed=()):
+        """Zamyka magistrale spoza konfiguracji, żeby od razu zwolniły port. removed: klucze
+        łączy, które właśnie zniknęły z konfiguracji - zamykane zawsze (także w trakcie
+        odpytywania); pozostałe (np. z przycisku Test) dopiero po `grace` s bez użycia."""
+        keys, removed, now, retired = set(keys), set(removed), time.monotonic(), []
         with self._lock:
             for key, bus in list(self._buses.items()):
-                if key not in keys and now - bus._used >= grace:
+                if key not in keys and (key in removed or now - bus._used >= grace):
                     del self._buses[key]
                     retired.append(bus)
         for bus in retired:

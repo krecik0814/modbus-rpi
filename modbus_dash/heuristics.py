@@ -219,7 +219,7 @@ def _reg(v):
         return None
     try:
         return int(v) & 0xFFFF
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # Infinity / NaN z JSON
         return None
 
 
@@ -312,8 +312,17 @@ def _family(h):
 _MIRROR = {"ABCD": "CDAB", "CDAB": "ABCD", "BADC": "DCBA", "DCBA": "BADC"}
 
 
+def _finite(v):
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:  # bardzo duża liczba całkowita z JSON
+        return False
+
+
 def _finite_or_none(v):
-    return v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v))
+    return v is None or _finite(v)
 
 
 def _hint_ok(h):
@@ -516,10 +525,12 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None, alig
     votes = _alignment_votes(items)
     fam = Counter(_family(h) for _, h, _, _ in items)
     forced = {"even": 0, "odd": 1}.get(alignment)
-    parity, ambiguous = None, None
+    parity, ambiguous, by_floats = None, None, False
     if fixed:
         order = fixed
+        by_floats = fam["float"] >= fam["int"]
     elif votes and fam["float"] >= fam["int"]:
+        by_floats = True
         # hipoteza (kolejność, parzystość) z największą liczbą głosów; zamienione bajty
         # (BADC/DCBA) muszą wygrać wyraźnie - pojedyncze "ładne" floaty to często przypadek
         def strength(k):
@@ -538,12 +549,14 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None, alig
         order = max(codec.BYTE_ORDERS, key=lambda o: (ints[o], -codec.BYTE_ORDERS.index(o))) if ints else "ABCD"
     if forced is not None:
         parity = forced
-    elif parity is None:
+    elif parity is None and by_floats and (votes[(order, 0)] or votes[(order, 1)]):
         parity = 1 if votes[(order, 1)] > votes[(order, 0)] else 0
-        if not votes[(order, 0)] and not votes[(order, 1)]:
-            par = Counter(a % 2 for a, h, _, _ in items if _width(h) > 1 and h["byte_order"] == order)
-            parity = 1 if par[1] > par[0] else 0
-    if forced is None and votes[(order, parity)]:
+    elif parity is None:
+        # licznik "całkowity": wyrównanie z podpowiedzi 32-bit, nie z przypadkowych floatów
+        par = Counter(a % 2 for a, h, _, _ in items if _width(h) > 1 and h["byte_order"] == order
+                      and (_family(h) == "int" or not by_floats))
+        parity = 1 if par[1] > par[0] else 0
+    if forced is None and by_floats and votes[(order, parity)]:
         mirror = (_MIRROR[order], 1 - parity)
         if votes[mirror] >= 0.8 * votes[(order, parity)]:
             ambiguous = mirror
@@ -620,8 +633,8 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None, alig
 
 def _ambiguity_text(order, parity, alt):
     where = ("nieparzystych", "parzystych")
-    return (f"UWAGA: wyrównanie wartości 32-bit jest niepewne - dane pasują do {order} od adresów "
-            f"{where[parity == 0]} i prawie równie dobrze do {alt[0]} od adresów {where[alt[1] == 0]}. "
+    return (f"UWAGA: wyrównanie wartości 32-bit jest niepewne - dane pasują zarówno do {order} od adresów "
+            f"{where[parity == 0]} (użyte w szkicu), jak i do {alt[0]} od adresów {where[alt[1] == 0]}. "
             "Porównaj wartości z wyświetlaczem licznika; jeśli się nie zgadzają, utwórz szkic z kolejnością "
             f"{alt[0]} albo zeskanuj ponownie co 2 rejestry od adresu {'nieparzystego' if alt[1] else 'parzystego'}.")
 
@@ -724,6 +737,9 @@ def plausibility(values, preset):
     """
     registers = (preset or {}).get("registers") or {}
     probe = (preset or {}).get("probe")
+    # licznik DC: moc musi zgadzać się z U·I - inaczej to inny licznik czytany "na ślepo"
+    u, i, pw = (values.get(k) for k in ("voltage_dc", "current_dc", "power_dc"))
+    dc_bad = all(_finite(x) for x in (u, i, pw)) and abs(pw - u * i) > max(1.0, 0.1 * abs(pw))
     acc = wsum = 0.0
     nonzero = False
     finite = seen = 0
@@ -738,7 +754,7 @@ def plausibility(values, preset):
         if cat is None:
             continue
         w = _WEIGHTS.get(cat, 1.0) * (2 if key == probe else 1)
-        s, ok = _value_score(cat, v)
+        s, ok = (0.0, False) if dc_bad and key in ("voltage_dc", "power_dc") else _value_score(cat, v)
         acc += s * w
         wsum += w
         nonzero = nonzero or ok

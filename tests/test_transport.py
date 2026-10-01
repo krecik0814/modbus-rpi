@@ -888,9 +888,12 @@ def test_serial_alias_is_the_same_bus(pty_pair, tmp_path):
         a = mgr.get(TransportConfig(kind="rtu", serial_port=path, baudrate=38400, timeout=0.3))
         assert a.read_registers(1, "input", 0, 2) == EXPECTED[:2]
         b = mgr.get(TransportConfig(kind="rtu", serial_port=str(alias), baudrate=38400, timeout=0.3))
-        assert b is not a and a._retired  # ta sama tożsamość łącza - stara instancja zwalnia port
+        assert b is a and not a._retired  # ta sama tożsamość łącza - jedna magistrala, port otwarty raz
         assert b.read_registers(1, "input", 0, 2) == EXPECTED[:2]
-        assert len(mgr.snapshot()) == 1
+        assert mgr.get(TransportConfig(kind="rtu", serial_port=path, baudrate=38400, timeout=0.3)) is a
+        assert len(mgr.snapshot()) == 1 and a.stats()["connects"] == 1
+        c = mgr.get(TransportConfig(kind="rtu", serial_port=str(alias), baudrate=19200, timeout=0.3))
+        assert c is not a and a._retired  # inne parametry portu - stara instancja zwalnia port
     finally:
         mgr.close_all()
         srv.stop()
@@ -903,7 +906,8 @@ def test_bus_manager_retain(server):
     gone = mgr.get(TransportConfig(kind="rtu_over_tcp", host=host, port=port))
     keep.read_registers(1, "input", 0, 2)
     assert mgr.retain([keep.cfg.key()]) == 0  # świeżo używane zostają (przycisk Test)
-    assert mgr.retain([keep.cfg.key()], grace=0) == 1
+    gone._used = time.monotonic()  # odpytywana przed chwilą
+    assert mgr.retain([keep.cfg.key()], removed=[gone.cfg.key()]) == 1  # usunięte z konfiguracji - od razu
     assert gone._retired and not keep._retired and keep.connected
     mgr.close_all()
 
@@ -925,3 +929,51 @@ def test_ping_without_unit_really_connects():
     res = udp.ping()
     assert res["ok"] and "Unit ID" in res["note"]
     udp.close()
+
+
+@linux_pty
+def test_dead_meter_does_not_slow_down_the_bus(pty_pair):
+    # osuszanie spóźnionych odpowiedzi nie może wydłużać każdego timeoutu o pełny timeout:
+    # martwy licznik obok żywego na tej samej magistrali RS-485
+    master, path = pty_pair
+    srv = S.SerialSimServer(master)
+    srv.add_device(make_device(1))
+    srv.start()
+    bus = serial_bus(path, timeout=0.4, retries=1)
+    try:
+        bus.read_registers(1, "input", 0, 2)
+        t0 = time.monotonic()
+        with bus.override(retries=0), pytest.raises(ModbusError):
+            bus.read_registers(7, "input", 0, 2)
+        single = time.monotonic() - t0  # jeden timeout w tej wersji pymodbus (3.6/3.7 czekają dłużej)
+        time.sleep(0.5)
+        t0 = time.monotonic()
+        for _ in range(3):
+            with pytest.raises(ModbusError):
+                bus.read_registers(7, "input", 0, 2)
+            assert bus.read_registers(1, "input", 0, 2) == EXPECTED[:2]
+        # 2 próby + krótkie osuszanie (ERROR_SETTLE), a nie dodatkowy pełny timeout po każdej próbie
+        assert time.monotonic() - t0 < 3 * (2 * single + 0.45)
+    finally:
+        bus.close()
+        srv.stop()
+
+
+@linux_pty
+def test_idle_after_timeout_does_not_wait_again(pty_pair):
+    # okno na spóźnioną odpowiedź liczy się od końca nieudanej wymiany, nie od kolejnego zapytania
+    master, path = pty_pair
+    srv = S.SerialSimServer(master)
+    srv.add_device(make_device(1))
+    srv.start()
+    bus = serial_bus(path, timeout=0.5, retries=0)
+    try:
+        with pytest.raises(ModbusError):
+            bus.read_registers(7, "input", 0, 2)
+        time.sleep(0.6)
+        t0 = time.monotonic()
+        assert bus.read_registers(1, "input", 0, 2) == EXPECTED[:2]
+        assert time.monotonic() - t0 < 0.3
+    finally:
+        bus.close()
+        srv.stop()

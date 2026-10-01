@@ -483,3 +483,35 @@ def test_dc_meter_detected_at_battery_voltage():
                 values[k] = decode_value(s, chunk)
             return values
         assert H.plausibility(read(p), p) > H.plausibility(read(q), q), volts
+
+
+@pytest.mark.parametrize("pid", ["eltako_dsz16", "carlo_gavazzi_em24", "orno_or_we_525"])
+def test_integer_draft_alignment_comes_from_integer_hints(pid):
+    import os
+    from collections import Counter
+    from modbus_dash.presets import PresetStore
+    from modbus_dash.simulator import Physics, SimDevice
+    lib = os.path.join(os.path.dirname(os.path.dirname(H.__file__)), "presets", "library")
+    p = PresetStore(lib, lib).get(pid)
+    dev = SimDevice(1, p)
+    dev.update(Physics(seed=1).tick(0))
+    func = Counter(s["function"] for s in p["registers"].values()).most_common(1)[0][0]
+    end = max(s["address"] + s["count"] for s in p["registers"].values() if s["function"] == func) + 2
+    regs = []
+    for a in range(0, end, 100):
+        try:
+            regs += dev.read(func, a, min(100, end - a))
+        except Exception:  # noqa: BLE001 - niezmapowany zakres
+            regs += [None] * min(100, end - a)
+    rows = [r for r in H.analyze_registers(0, regs, step=1) if r["hint"]]
+    d = H.suggest_preset(rows, register_type=func)
+    # licznik "całkowity": bez fałszywego ostrzeżenia o wyrównaniu wziętego z przypadkowych floatów
+    assert "_warnings" not in d and "UWAGA" not in d["description"]
+
+
+def test_dc_preset_needs_power_to_match_voltage_times_current():
+    p = normalize_preset(json.load(open(H.__file__.replace("modbus_dash/heuristics.py",
+                                                           "presets/library/peacefair_pzem_017.json"))))
+    ok = {"voltage_dc": 22.93, "current_dc": 10.0, "power_dc": 229.3, "energy_import": 2.31}
+    bad = {**ok, "current_dc": 0.0}  # moc bez prądu: to nie jest licznik DC
+    assert H.plausibility(ok, p) > 0.9 > H.plausibility(bad, p)

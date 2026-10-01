@@ -217,15 +217,19 @@ class MqttPublisher:
                 self._last_error = f"rozłączono (kod {rc})"
 
     def _on_message(self, client, userdata, msg):
+        # wyjątek z callbacku zatrzymałby wątek sieciowy paho na dobre - nigdy go nie przepuszczamy
         with self._lock:
-            if client is not self._client or not (self._cfg and self._cfg["ha_discovery"]):
-                return
-            if msg.topic == f"{self._cfg['ha_prefix']}/status":
-                # Home Assistant po restarcie wysyła "online" - ponownie publikujemy discovery
-                if msg.payload == b"online":
-                    self._publish_discovery_all()
-            elif msg.retain and msg.payload and self._is_discovery_topic(msg.topic):
-                self._sweep(msg.topic, msg.payload)
+            try:
+                if client is not self._client or not (self._cfg and self._cfg["ha_discovery"]):
+                    return
+                if msg.topic == f"{self._cfg['ha_prefix']}/status":
+                    # Home Assistant po restarcie wysyła "online" - ponownie publikujemy discovery
+                    if msg.payload == b"online":
+                        self._publish_discovery_all()
+                elif msg.retain and msg.payload and self._is_discovery_topic(msg.topic):
+                    self._sweep(msg.topic, msg.payload)
+            except Exception:  # noqa: BLE001
+                log.exception("MQTT: wiadomość %s", getattr(msg, "topic", "?"))
 
     def _discovery_filter(self):
         return f"{self._cfg['ha_prefix']}/sensor/{safe_key(self._cfg['topic_prefix'])}/+/config"
@@ -248,14 +252,17 @@ class MqttPublisher:
             data = json.loads(payload)
             ident = (data.get("device") or {}).get("identifiers") or [None]
             ident = ident[0] if isinstance(ident, list) else ident
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, TypeError, RecursionError):
             data, ident = {}, None
+        if not isinstance(ident, str):
+            ident = None
         if ident in mine and not self._dev_ready(ident, devices):
             return  # urządzenie istnieje, ale jego discovery jeszcze nie wyszło (np. brak presetu)
         self._pub(topic, "", retain=True)
         if ident not in mine and isinstance(data, dict):
             live = {self._t(d, "availability") for d in devices} | {self._t(d, "state") for d in devices}
-            stale = [a.get("topic") for a in data.get("availability") or [] if isinstance(a, dict)]
+            avail = data.get("availability")
+            stale = [a.get("topic") for a in avail if isinstance(a, dict)] if isinstance(avail, list) else []
             stale.append(data.get("state_topic"))
             for t in stale:
                 if isinstance(t, str) and t.startswith(self._t("")) and t != self._t("status") and t not in live:
@@ -283,6 +290,14 @@ class MqttPublisher:
         """Listener pollera."""
         with self._lock:
             if not (self._client and self._connected and self._cfg):
+                return
+            if runtime is not None and (not runtime.cfg.get("enabled", True) or runtime.reader is None
+                                        or getattr(runtime, "preset_error", None)):
+                # ręczny odczyt wyłączonego urządzenia albo odczyt w toku przy wyłączaniu:
+                # w HA urządzenie zostaje "offline", tak jak na dashboardzie
+                if self._dev_online.get(device_id) is not False:
+                    self._dev_online[device_id] = False
+                    self._pub(self._t(device_id, "availability"), "offline", retain=True)
                 return
             online = bool(sample["ok"])
             if self._dev_online.get(device_id) != online:

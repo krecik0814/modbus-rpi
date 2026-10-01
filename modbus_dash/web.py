@@ -129,10 +129,11 @@ def create_app(ctx):
     @app.before_request
     def _guard():
         auth = opts.get("auth")
-        if not auth and not host_allowed(request.host, opts.get("allowed_hosts") or ()):
+        host = request.headers.get("Host")  # bez nagłówka (HTTP/1.0, healthcheck) - nie przeglądarka
+        if not auth and host is not None and not host_allowed(host, opts.get("allowed_hosts") or ()):
             # bez hasła strona z obcej domeny przemapowanej na ten adres (DNS rebinding)
             # mogłaby czytać i zmieniać konfigurację - odpowiadamy tylko znanym nazwom
-            msg = (f"nieznana nazwa hosta '{_host_name(request.host)}' - dodaj ją opcją --allowed-host "
+            msg = (f"nieznana nazwa hosta '{_host_name(host)}' - dodaj ją opcją --allowed-host "
                    "albo włącz logowanie (--auth)")
             if request.path.startswith("/api/"):
                 return jsonify({"error": msg}), 403
@@ -653,6 +654,10 @@ def create_app(ctx):
     @app.put("/api/settings/mqtt")
     def api_put_mqtt():
         data = _body()
+        with ctx.config.write_lock:  # sprawdzenie i zapis razem - równoległa zmiana hosta nie przejdzie
+            return _put_mqtt(data)
+
+    def _put_mqtt(data):
         stored = ctx.config.get()["mqtt"]
         if data.get("password", "********") == "********":
             # zapisane hasło (zamaskowane w GET) zostaje tylko dla tego samego brokera i konta -

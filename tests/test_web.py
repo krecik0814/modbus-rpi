@@ -448,3 +448,59 @@ def test_preset_validation_edge_cases(env):
     r = post(c, "/api/presets", {**base, "name": "- SDM630 garaż"})
     assert r.status_code == 201 and r.get_json()["id"] == "SDM630 garaż"
     c.delete("/api/presets/" + "SDM630 garaż")
+
+
+def test_mqtt_password_check_is_atomic(env):
+    import threading
+    ctx, c, _ = env
+    app = c.application
+    for trial in range(8):
+        assert put(c, "/api/settings/mqtt", {"enabled": False, "host": "broker.lan", "port": 1883,
+                                             "username": "ha", "password": "S3cret", "interval": 10}).status_code == 200
+        go = threading.Event()
+
+        def noise(go=go):
+            cl = app.test_client()
+            go.wait(2)
+            for _ in range(3):
+                put(cl, "/api/settings/mqtt", {"interval": 15})
+
+        def attack(go=go):
+            cl = app.test_client()
+            go.wait(2)
+            put(cl, "/api/settings/mqtt", {"host": "evil.example", "password": "x"})
+        threads = [threading.Thread(target=noise) for _ in range(6)] + [threading.Thread(target=attack)]
+        for t in threads:
+            t.start()
+        go.set()
+        for t in threads:
+            t.join(10)
+        m = ctx.config.get()["mqtt"]
+        assert m["host"] == "evil.example" and m["password"] == "x", (trial, m["host"], m["password"])
+
+
+def test_request_without_host_header_is_served(env):
+    from werkzeug.test import EnvironBuilder
+    ctx, c, _ = env
+    environ = EnvironBuilder(path="/api/health").get_environ()
+    environ.pop("HTTP_HOST", None)
+    environ["SERVER_NAME"] = "waitress.invalid"
+    status = []
+    body = b"".join(c.application(environ, lambda s, h, *a: status.append(s)))
+    assert status[0].startswith(("200", "503")), (status, body)
+
+
+def test_huge_numbers_are_validation_errors(env):
+    ctx, c, _ = env
+    huge = "1" + "0" * 400
+    for url, body in (("/api/settings/history", '{"memory_points": %s}' % huge),
+                      ("/api/settings/mqtt", '{"interval": %s}' % huge)):
+        r = c.put(url, data=body, content_type="application/json")
+        assert r.status_code == 400, (url, r.get_data(as_text=True))
+    r = c.post("/api/presets/validate", content_type="application/json",
+               data='{"registers": {"v": {"address": 0, "scale": %s, "invalid": [%s]}}}' % (huge, huge))
+    assert r.status_code == 200 and not r.get_json()["ok"]
+    r = c.post("/api/scan/preset", content_type="application/json",
+               data='{"registers": [{"address": 0, "raw": [Infinity, 1e400], "hint": {"guess": "voltage", '
+                    '"type": "float32", "byte_order": "ABCD", "score": 0.9, "value": 230}}]}')
+    assert r.status_code == 200
