@@ -374,6 +374,11 @@ class PresetStore:
             raise PresetFileError(preset_id, "oczekiwano obiektu JSON", path.read_text(encoding="utf-8", errors="replace"))
         return {**raw, "_id": preset_id, "_filename": preset_id, "_builtin": builtin}
 
+    def get_text(self, preset_id):
+        """Dokładna treść pliku presetu (tekst) albo None."""
+        path, _ = self._locate(preset_id)
+        return path.read_text(encoding="utf-8") if path else None
+
     def get(self, preset_id):
         """Znormalizowany preset; None gdy brak; rzuca PresetError gdy niepoprawny."""
         path, builtin = self._locate(preset_id)

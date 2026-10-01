@@ -42,9 +42,13 @@ z nakładką RS-485, adaptera USB-RS485 albo bramki Ethernet. Bez chmury, bez ze
 ## Szybki start
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python app.py
 ```
+
+Na Raspberry Pi najprościej: `bash deploy/install-rpi.sh` (patrz [Instalacja](#instalacja)).
 
 Otwórz `http://localhost:5000`. Startuje wbudowany symulator licznika 3-fazowego (Modbus TCP, port 5020)
 i od razu widać go na dashboardzie jako urządzenie **Symulator 3F**.
@@ -122,8 +126,8 @@ w interfejsie oznaczona jako zablokowana). Bez flag magistrale i urządzenia kon
 | `--port` | port HTTP dashboardu | `5000` |
 | `--auth USER:HASŁO` | logowanie HTTP Basic (lub zmienna `MODBUS_DASH_AUTH`) | wyłączone |
 | `--allow-write` | zezwala na zapis rejestrów/cewek ze skanera | wyłączone |
-| `--data-dir` | katalog na `config.json` i `history.sqlite` | `./data` |
-| `--presets-dir` | katalog presetów użytkownika | `./presets` |
+| `--data-dir` | katalog na `config.json` i `history.sqlite` | `<katalog aplikacji>/data` |
+| `--presets-dir` | katalog presetów użytkownika | `<katalog aplikacji>/presets` |
 | `--no-history` | bez historii w SQLite | |
 | `--debug` | tryb debug Flask (wymusza nasłuch na 127.0.0.1) | |
 | `--log-level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` | `INFO` |
@@ -243,7 +247,7 @@ Tabela generowana z biblioteki (`python tools/meters_table.py --readme`). Kolumn
 ustawienia fabryczne tylko wtedy, gdy potwierdza je dokumentacja - zawsze sprawdź ustawienia w menu licznika.
 
 <!-- METERS_TABLE_START -->
-| Producent | Model | Fazy | Rejestry | Typy danych | Kolejność | Port (fabr.) | Wielkości | Preset |
+| Producent | Model | Fazy | Rejestry | Typy danych | Kolejność | Port (fabr.) | Wartości | Preset |
 |---|---|---|---|---|---|---|---|---|
 | ABB | A43 / A44 / B23 / B24 (wersje z RS-485 Modbus), także 1-fazowy B21 | 3 | Holding (FC03) | int16, int32, int64, uint16, uint32, uint64 | ABCD | - | 46 | `abb_a43_a44_b23_b24` |
 | B+G e-tech | DS100-00B / DS100-30B | 3 | Holding (FC03) | int16, int32, uint16, uint32 | ABCD | 9600 8N1 | 51 | `bg_etech_ds100` |
@@ -341,8 +345,9 @@ scrape_configs:
     static_configs: [{targets: ["raspberrypi.local:5000"]}]
 ```
 
-Metryki: `modbus_dash_value{device,key,label,unit,group}`, `modbus_dash_up`, `modbus_dash_polls_total`,
-`modbus_dash_poll_failures_total`, `modbus_dash_poll_duration_seconds`.
+Metryki: `modbus_dash_value{device,device_name,key,label,unit,group}`, `modbus_dash_up`,
+`modbus_dash_polls_total`, `modbus_dash_poll_failures_total`, `modbus_dash_poll_duration_seconds`,
+`modbus_dash_last_poll_timestamp_seconds`, `modbus_dash_last_success_timestamp_seconds`, `modbus_dash_info{version}`.
 
 ## Symulator
 
@@ -411,18 +416,20 @@ Licznik            Nakładka RS-485             Raspberry Pi
   (ochrona przed CSRF - złośliwa strona otwarta w przeglądarce nie skasuje Twoich presetów).
 - Zapis do urządzeń (`/api/write`) jest wyłączony, dopóki nie podasz `--allow-write`.
 - `--debug` uruchamia debugger Werkzeug, który pozwala wykonać dowolny kod - dlatego wymusza nasłuch na 127.0.0.1.
-- Presety są zapisywane atomowo, identyfikatory są walidowane (brak path traversal), presetów wbudowanych nie da się
-  nadpisać ani usunąć przez API.
+- Presety są zapisywane atomowo, identyfikatory są walidowane (brak path traversal). Plików biblioteki wbudowanej nie
+  da się zmienić ani usunąć przez API; własny preset o tym samym identyfikatorze przesłania wbudowany, dopóki go nie
+  usuniesz.
 
 ## Rozwiązywanie problemów
 
 | Objaw | Przyczyna | Rozwiązanie |
 |-------|-----------|-------------|
-| Brak odpowiedzi (timeout) | zły Unit ID, baudrate lub parzystość | sprawdź menu licznika; **Szukaj urządzeń**; typowo 9600 8N1, Eastron SDM120 2400, Orno często 9600 8E1 |
+| Brak odpowiedzi (timeout) | zły Unit ID, baudrate lub parzystość | sprawdź menu licznika; **Szukaj urządzeń**; typowo 9600 8N1, Eastron SDM120 2400 8N1, Orno często 9600 8E1 (OR-WE-525/526: 8N1) |
 | Brak odpowiedzi (timeout) | zamienione A/B, brak zasilania licznika | zamień A z B |
 | Brak odpowiedzi, port otwarty | konsola na porcie / mini-UART RPi 3/4 (licznik 8E1) | `raspi-config` (login shell: NIE), `dtoverlay=disable-bt` |
-| Błąd „odpowiedź nie pasuje do zapytania” | adapter z lokalnym echem | zaznacz „Adapter z lokalnym echem” / `--local-echo` |
-| `Permission denied` na porcie | brak uprawnień | `sudo usermod -a -G dialout $USER` |
+| „Błąd transmisji: odpowiedź ma 0 rejestrów zamiast N” (skaner: „urządzenie nie zwróciło żadnych danych”) | adapter z lokalnym echem | zaznacz „Adapter z lokalnym echem” / `--local-echo` |
+| „Brak uprawnień do portu …” | użytkownik spoza grupy `dialout` | `sudo usermod -a -G dialout $USER` (wyloguj się i zaloguj) |
+| „Port … nie istnieje” | zła nazwa portu, UART wyłączony, adapter odłączony | `ls /dev/serial* /dev/ttyUSB*`; lista portów w zakładce Połączenia |
 | Wyjątek 02 (niedozwolony adres) | rejestr nie istnieje w tym modelu | sprawdź preset / użyj skanera; aplikacja sama dzieli odrzucone bloki |
 | Wyjątek 01 (niedozwolona funkcja) | licznik nie obsługuje FC04 lub FC03 | zmień `register_type` w presecie |
 | Wartości ~1e-38, ~1e+38 lub bez sensu | zła kolejność bajtów | w skanerze porównaj kolumny ABCD/CDAB/BADC/DCBA |
@@ -437,13 +444,16 @@ Wszystkie odpowiedzi w JSON; błędy jako `{"error": "..."}` z kodem 4xx/5xx.
 | Endpoint | Metoda | Opis |
 |----------|--------|------|
 | `/api/info`, `/api/health` | GET | wersje, symulator, funkcje / stan urządzeń |
-| `/api/presets` | GET, POST | lista presetów / nowy preset (nigdy nie nadpisuje) |
-| `/api/presets/{id}` | GET, PUT, DELETE | preset (wbudowanych nie można zmieniać) |
+| `/api/presets` | GET, POST | lista presetów / nowy preset (nigdy nie nadpisuje istniejącego pliku; `copy_from`: kopia presetu) |
+| `/api/presets/{id}` | GET, PUT, DELETE | preset (`?raw=1`: dokładna treść pliku; wbudowanych nie można zmieniać) |
 | `/api/presets/validate` | POST | walidacja presetu |
-| `/api/buses`, `/api/buses/{id}` | GET, PUT, DELETE | magistrale |
+| `/api/buses` | GET | lista połączeń (magistral) |
+| `/api/buses/{id}` | PUT, DELETE | zapis / usunięcie połączenia (`?create=1`: błąd 409 zamiast nadpisania) |
 | `/api/buses/{id}/ping`, `/api/buses/test` | POST | test połączenia |
 | `/api/serial-ports` | GET | dostępne porty szeregowe |
-| `/api/devices`, `/api/devices/{id}` | GET, PUT, DELETE | urządzenia |
+| `/api/devices` | GET | lista urządzeń ze stanem |
+| `/api/devices/{id}` | PUT, DELETE | zapis / usunięcie urządzenia (`?create=1`: błąd 409 zamiast nadpisania) |
+| `/api/devices/{id}/read` | POST | natychmiastowy odczyt z licznika |
 | `/api/devices/{id}/values` | GET | ostatnie wartości (z pamięci) |
 | `/api/devices/{id}/history?seconds=` | GET | historia (pamięć lub SQLite) |
 | `/api/devices/{id}/history.csv` | GET | eksport CSV |

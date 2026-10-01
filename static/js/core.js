@@ -198,10 +198,11 @@ export const store = {
 // ── okna modalne ─────────────────────────────────────────────
 
 /**
- * modal({title, subtitle, body: Node|[Node], actions: [{label, class, onClick(close)}], wide, onClose})
- * Zamyka się Esc, kliknięciem w tło i przyciskiem ×; przywraca fokus.
+ * modal({title, subtitle, body: Node|[Node], actions: [{label, class, onClick(close)}], wide, onClose,
+ *        closeOnBackdrop})
+ * Zamyka się Esc, kliknięciem w tło (o ile closeOnBackdrop) i przyciskiem ×; przywraca fokus.
  */
-export function modal({ title, subtitle, body, actions = [], wide = false, onClose } = {}) {
+export function modal({ title, subtitle, body, actions = [], wide = false, onClose, closeOnBackdrop = true } = {}) {
   const prevFocus = document.activeElement;
   const root = $('#modal-root');
   let closed = false;
@@ -225,7 +226,7 @@ export function modal({ title, subtitle, body, actions = [], wide = false, onClo
     h('div', { class: 'modal-body' }, body),
     actions.length ? h('div', { class: 'modal-foot' }, actions.map((a) =>
       h('button', { class: 'btn ' + (a.class || 'btn-ghost'), type: 'button', onclick: () => a.onClick ? a.onClick(close) : close() }, a.label))) : null);
-  const overlay = h('div', { class: 'modal-overlay', onmousedown: (e) => { if (e.target === overlay) close(); } }, box);
+  const overlay = h('div', { class: 'modal-overlay', onmousedown: (e) => { if (closeOnBackdrop && e.target === overlay) close(); } }, box);
   root.append(overlay);
   document.addEventListener('keydown', onKey);
   const first = box.querySelector('input,select,textarea,.modal-foot .btn-primary,.modal-foot .btn-danger,.modal-foot .btn');
@@ -238,6 +239,12 @@ function trapFocus(e, box) {
     .filter((x) => x.offsetParent !== null);
   if (!f.length) return;
   const first = f[0], last = f[f.length - 1];
+  const a = document.activeElement;
+  if (a === box || !box.contains(a)) {
+    e.preventDefault();
+    (e.shiftKey ? last : first).focus();
+    return;
+  }
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }

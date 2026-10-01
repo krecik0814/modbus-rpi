@@ -627,7 +627,8 @@ def _value_score(cat, v):
     elif cat == "power":
         s = 1.0 if 1e-3 <= av <= 1e7 else 0.3 if av < 1e-3 else 0.0
     elif cat == "energy":
-        s = 1.0 if v > 0 else 0.0
+        # liczniki domowe i przemysłowe rzadko przekraczają 1 GWh; większe wartości to zwykle zły odczyt
+        s = 1.0 if 0 < v <= 1e6 else 0.4 if 0 < v <= 1e8 else 0.0
     elif cat == "energy_net":
         s = 1.0
     elif cat == "thd":

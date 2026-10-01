@@ -165,10 +165,11 @@ export function mount(root, ctx) {
   };
 
   const mqtt = mqttCard(ctx, life);
-  const hist = historyCard(ctx, life);
+  let info = null;
+  const hist = historyCard(ctx, life, () => info && info.render(ctx.info));
   const prom = prometheusCard(ctx, life);
   const rest = restCard(ctx, life);
-  const info = infoCard(ctx, life);
+  info = infoCard(ctx, life);
 
   fill(root, h('div', { class: 'v-integrations' },
     pageHeader('Integracje'),
@@ -268,7 +269,7 @@ function mqttCard(ctx, life) {
       h('div', { class: 'span-all' }, tls.el)),
     h('div', { class: 'int-sub', role: 'presentation' }, 'Publikacja'),
     h('div', { class: 'form-grid' },
-      field('Prefiks topiców', prefix, 'początek nazw topiców, np. modbus-dash'),
+      field('Prefiks topików', prefix, 'początek nazw topików, np. modbus-dash'),
       field('Interwał publikacji [s]', interval, '1-3600; co ile wysyłać odczyty'),
       h('div', { class: 'span-all' }, retain.el),
       h('div', { class: 'span-all' }, ha.el),
@@ -359,6 +360,23 @@ function mqttCard(ctx, life) {
     renderTopics();
   }
 
+  /** Ustawienia zmienione gdzie indziej trafiają do pól, których użytkownik nie ruszał. */
+  function mergeUntouched(prev, next) {
+    const cur = snapshot(), old = savedSnapshot(prev), neu = savedSnapshot(next);
+    const fields = {
+      enabled: (v) => { en.input.checked = v; }, host: (v) => { host.value = v; }, port: (v) => { port.value = v; },
+      username: (v) => { user.value = v; }, tls: (v) => { tls.input.checked = v; },
+      topic_prefix: (v) => { prefix.value = v; }, interval: (v) => { interval.value = v; },
+      retain: (v) => { retain.input.checked = v; }, ha_discovery: (v) => { ha.input.checked = v; },
+      ha_prefix: (v) => { haPrefix.value = v; },
+    };
+    for (const [k, set] of Object.entries(fields)) {
+      if (cur[k] === old[k] && neu[k] !== old[k]) set(neu[k]);
+    }
+    syncDisabled();
+    renderTopics();
+  }
+
   function snapshot() {
     return {
       enabled: en.input.checked, host: host.value.trim(), port: port.value.trim(), username: user.value.trim(),
@@ -411,7 +429,7 @@ function mqttCard(ctx, life) {
     const intV = parseIntStrict(interval.value);
     if (intV == null || intV < 1 || intV > 3600) errs.push([interval, 'Interwał: liczba całkowita 1-3600 s']);
     const pre = cleanTopic(prefix.value);
-    if (!pre) errs.push([prefix, 'Podaj prefiks topiców, np. modbus-dash']);
+    if (!pre) errs.push([prefix, 'Podaj prefiks topików, np. modbus-dash']);
     else if (/[+#\s]/.test(pre)) errs.push([prefix, 'Prefiks nie może zawierać spacji ani znaków + i #']);
     const haOn = ha.input.checked;
     let haV = cleanTopic(haPrefix.value);
@@ -469,8 +487,10 @@ function mqttCard(ctx, life) {
     const first = !saved;
     const wasDirty = isDirty();
     const changed = first || !sameSettings(saved, s);
+    const prev = saved;
     saved = s;
     if (fromSave || first || (changed && !wasDirty)) fillForm(s);
+    else if (changed) { mergeUntouched(prev, s); updateDirty(); }
     else updateDirty();
     if (first) {
       formLoad.remove();
@@ -568,7 +588,7 @@ function mqttCard(ctx, life) {
     const pre = cleanTopic(prefix.value) || 'modbus-dash';
     const haP = cleanTopic(haPrefix.value) || 'homeassistant';
     const dev = currentDevice();
-    const devKey = dev ? safeKey(dev.id) : '<urządzenie>';
+    const devKey = dev ? dev.id : '<urządzenie>';
     const sample = dev ? samples.get(dev.id) : null;
     const keys = sample && sample.values ? pickSample(sample.values) : [];
     const firstKey = keys[0] || 'voltage_l1';
@@ -579,7 +599,7 @@ function mqttCard(ctx, life) {
       [`${pre}/${devKey}/availability`, 'online / offline - czy licznik odpowiada'],
     ];
     if (ha.input.checked) {
-      rows.push([`${haP}/sensor/${safeKey(pre)}/${devKey}_${safeKey(firstKey)}/config`,
+      rows.push([`${haP}/sensor/${safeKey(pre)}/${dev ? safeKey(dev.id) : devKey}_${safeKey(firstKey)}/config`,
         'konfiguracja czujnika dla Home Assistant (discovery, retained) - jedna na każdą wartość']);
     }
     topicList.replaceChildren(...rows.map(([t, d]) => h('li', null, h('code', null, t), h('span', null, d))));
@@ -641,7 +661,7 @@ function mqttCard(ctx, life) {
 
 // ── historia ─────────────────────────────────────────────────
 
-function historyCard(ctx, life) {
+function historyCard(ctx, life, onChange) {
   let saved = null;
   let available = null;
   let active = null;
@@ -754,6 +774,12 @@ function historyCard(ctx, life) {
     saved = data.settings;
     available = !!data.available;
     active = !!data.active;
+    // wspólna flaga (Dashboard: zakresy dłuższe niż 1 h, karta Informacje)
+    if (ctx.info) {
+      ctx.info.features = ctx.info.features || {};
+      ctx.info.features.history = active;
+    }
+    if (onChange) onChange();
     fillForm(saved);
     renderState();
   }
@@ -1002,7 +1028,7 @@ function infoCard(ctx, life) {
         h('dt', null, 'pymodbus'), h('dd', null, info.pymodbus || '-'),
         h('dt', null, 'Python'), h('dd', null, info.python || '-'),
         h('dt', null, 'Symulator'), h('dd', null, simText),
-        h('dt', null, 'Magistrala default'), h('dd', null, (info.default_bus && info.default_bus.describe) || '-'),
+        h('dt', null, 'Połączenie default'), h('dd', null, (info.default_bus && info.default_bus.describe) || '-'),
         h('dt', null, 'Adres panelu'), h('dd', null, location.origin),
         h('dt', null, 'Funkcje'), h('dd', null, h('div', { class: 'int-feat' },
           feat(f.mqtt, 'MQTT (paho-mqtt)', 'dostępne', 'brak biblioteki'),
@@ -1012,5 +1038,5 @@ function infoCard(ctx, life) {
   }
 
   render(ctx.info);
-  return { el };
+  return { el, render };
 }

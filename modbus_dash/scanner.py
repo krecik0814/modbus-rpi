@@ -28,10 +28,13 @@ def _fatal(e):
 
 
 def read_range(bus, unit, function, start, end, chunk=SCAN_CHUNK, max_requests=400):
-    """Czyta rejestry [start, end). Zwraca (lista wartości z None dla nieczytelnych, błąd|None).
+    """Czyta rejestry [start, end).
 
-    Gdy urządzenie odrzuci blok wyjątkiem Modbus, blok jest dzielony na pół aż do
-    pojedynczych rejestrów - dzięki temu skan omija dziury w mapie rejestrów.
+    Zwraca (wartości z None dla nieczytelnych, błąd|None, liczba zapytań, ostatni wyjątek
+    Modbus|None, adres końca sprawdzonego zakresu). Gdy urządzenie odrzuci blok wyjątkiem
+    Modbus, blok jest dzielony na pół aż do pojedynczych rejestrów - dzięki temu skan omija
+    dziury w mapie rejestrów. Wyjątek 01 (niedozwolona funkcja) dotyczy całej funkcji, więc
+    kończy skan od razu.
     """
     bits = function in ("coil", "discrete")
     limit = MAX_BITS if bits else MAX_REGS
@@ -40,6 +43,8 @@ def read_range(bus, unit, function, start, end, chunk=SCAN_CHUNK, max_requests=4
     pending = [(a, min(chunk, end - a)) for a in range(start, end, chunk)]
     requests = 0
     error = None
+    last_exc = None
+    covered = start
     while pending:
         addr, count = pending.pop(0)
         if requests >= max_requests:
@@ -55,28 +60,41 @@ def read_range(bus, unit, function, start, end, chunk=SCAN_CHUNK, max_requests=4
             if _fatal(e):
                 error = str(e)
                 break
+            last_exc = e
+            if getattr(e, "code", None) == 1:
+                error = f"{e} - urządzenie nie obsługuje tej funkcji, spróbuj innego typu rejestrów"
+                covered = end
+                break
             if count > 1:
                 half = count // 2
                 if half % 2 and half > 1:
                     half -= 1  # parzyste podziały - pary rejestrów float32 zostają razem
                 pending[0:0] = [(addr, half), (addr + half, count - half)]
+            else:
+                covered = max(covered, addr + 1)
             continue
+        covered = max(covered, addr + count)
         for i, v in enumerate(vals[:count]):
             out[addr - start + i] = int(v)
-    return out, error, requests
+    return out, error, requests, last_exc, covered
 
 
 def scan(bus, unit, function, start, end, step=2):
     """Pełny skan zakresu z analizą heurystyczną (rejestry) albo lista bitów."""
     t0 = time.monotonic()
-    values, error, requests = read_range(bus, unit, function, start, end)
+    values, error, requests, last_exc, covered = read_range(bus, unit, function, start, end)
+    readable = sum(v is not None for v in values)
+    if not readable and not error and last_exc is not None:
+        error = f"każde zapytanie odrzucone: {last_exc}"
     result = {
         "function": function,
         "start": start,
         "end": end,
         "requests": requests,
         "error": error,
-        "readable": sum(v is not None for v in values),
+        "readable": readable,
+        "exception_code": getattr(last_exc, "code", None),
+        "unchecked_from": covered if covered < end else None,
     }
     if function in ("coil", "discrete"):
         result["bits"] = [{"address": start + i, "value": v} for i, v in enumerate(values)]
@@ -85,7 +103,8 @@ def scan(bus, unit, function, start, end, step=2):
         rows = heuristics.analyze_registers(start, values, step=step)
         result["registers"] = rows
         result["count"] = len(rows)
-    result["unreadable"] = _ranges(start, values)
+    # nieczytelne = sprawdzone i odrzucone; zakres za limitem zapytań nie był sprawdzany
+    result["unreadable"] = _ranges(start, values[:max(0, covered - start)])
     result["duration_ms"] = round((time.monotonic() - t0) * 1000, 1)
     return result
 
@@ -204,7 +223,7 @@ def detect_preset(job, bus, unit, store, timeout=None):
     job.progress(len(summaries), len(summaries), "Gotowe")
     # przy remisie wygrywa preset z większą liczbą kluczy kanonicznych, potem wbudowany
     ranked.sort(key=lambda e: (-e["score"], -e["matched"], not e["builtin"]))
-    job.finish({"candidates": ranked[:15]})
+    job.finish({"candidates": ranked[:15], "checked": len(ranked)})
 
 
 class Job:
@@ -254,7 +273,8 @@ class JobManager:
     def start(self, kind, fn, *args):
         job = Job(f"{kind}-{next(self._ids)}", kind)
         with self._lock:
-            running = [j for j in self._jobs.values() if j.kind == kind and j.state == "running"]
+            running = [j for j in self._jobs.values()
+                       if j.kind == kind and j.state == "running" and not j.cancelled]
             if running:
                 raise RuntimeError("takie zadanie już trwa - poczekaj lub je anuluj")
             self._jobs[job.id] = job

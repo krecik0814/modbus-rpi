@@ -118,6 +118,13 @@ def validate_history(data, strict=False):
     return h
 
 
+class _AnyBus:
+    """Przy wczytywaniu nie odrzucamy urządzeń z nieznaną magistralą."""
+
+    def __contains__(self, item):
+        return True
+
+
 class ConfigStore:
     """Wątkowo bezpieczny dostęp do konfiguracji z atomowym zapisem na dysk."""
 
@@ -149,14 +156,14 @@ class ConfigStore:
                 buses[bid] = validate_bus(bid, b)
             except ConfigError:
                 continue
-        for bid, b in self._overrides.get("buses", {}).items():
-            buses.setdefault(bid, validate_bus(bid, b))
         if "default" not in buses:
             buses["default"] = validate_bus("default", (base.get("buses") or {}).get("default", {"kind": "tcp"}))
         devices = {}
         for did, d in (data.get("devices") or {}).items():
             try:
-                devices[did] = validate_device(did, d, buses)
+                # magistrala może istnieć tylko przy części uruchomień (np. "sim" z CLI) - urządzenie
+                # zostaje w konfiguracji i pokaże błąd, zamiast zniknąć przy następnym zapisie
+                devices[did] = validate_device(did, d, _AnyBus())
             except ConfigError:
                 continue
         return {

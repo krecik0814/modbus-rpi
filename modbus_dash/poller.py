@@ -153,7 +153,7 @@ class Poller:
     def _bus_for(self, bus_id):
         bus_cfg = self.config.get()["buses"].get(bus_id)
         if bus_cfg is None:
-            raise RuntimeError(f"brak magistrali '{bus_id}'")
+            raise RuntimeError(f"brak połączenia '{bus_id}' (usunięte albo dostępne tylko przy innych parametrach uruchomienia)")
         cfg = {k: v for k, v in bus_cfg.items() if k not in ("name", "locked")}
         return self.buses.get(self.TransportConfig.from_dict(cfg))
 

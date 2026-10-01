@@ -34,7 +34,7 @@ def table():
         rows.append((p.get("manufacturer", ""), p.get("model") or p.get("name", f.stem), p.get("phases", ""),
                      " + ".join(FC.get(x, x) for x in sorted(funcs)), ", ".join(types),
                      ", ".join(str(o) for o in orders), ser, len(regs), f.stem))
-    out = ["| Producent | Model | Fazy | Rejestry | Typy danych | Kolejność | Port (fabr.) | Wielkości | Preset |",
+    out = ["| Producent | Model | Fazy | Rejestry | Typy danych | Kolejność | Port (fabr.) | Wartości | Preset |",
            "|---|---|---|---|---|---|---|---|---|"]
     for r in sorted(rows, key=lambda r: (r[0].lower(), r[1].lower())):
         out.append("| " + " | ".join(str(x) for x in r[:8]) + f" | `{r[8]}` |")

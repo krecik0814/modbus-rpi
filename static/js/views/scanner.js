@@ -192,7 +192,7 @@ export function mount(root, ctx) {
   const presetBtn = h('button', { type: 'button', class: 'btn btn-success', disabled: true, onclick: createPreset }, 'Utwórz preset');
 
   const paramsFs = h('fieldset', { class: 'sc-params' },
-    field('Magistrala', busSel, null, { class: 'field sc-wide' }),
+    field('Połączenie', busSel, null, { class: 'field sc-wide' }),
     field('Unit ID', unitIn, 'zwykle 1-247', { class: 'field sc-narrow' }),
     field('Funkcja', funcSel, null, { class: 'field sc-wide' }),
     field('Od adresu', startIn, startNote),
@@ -218,7 +218,7 @@ export function mount(root, ctx) {
   const resultsMeta = h('div', { class: 'small muted' });
   const liveLine = h('div', { class: 'status-line', hidden: true });
   const summary = h('div', { 'aria-live': 'polite' });
-  const resultsBody = h('div', null, emptyState('Ustaw parametry i kliknij „Skanuj”. Na symulatorze spróbuj: magistrala sim, Unit ID 1, Input Registers, adresy 0-80.'));
+  const resultsBody = h('div', null, emptyState('Ustaw parametry i kliknij „Skanuj”. Na symulatorze spróbuj: połączenie „Symulator”, Unit ID 1, Input Registers, adresy 0-80.'));
   resultsBody.addEventListener('animationend', (e) => {
     if (e.animationName === 'flash') e.target.classList.remove('flash');
   });
@@ -307,7 +307,7 @@ export function mount(root, ctx) {
     if (!s.error && !e.error) {
       const span = e.address - s.address;
       if (span <= 0) { endText = 'musi być większy niż adres początkowy'; endBad = true; }
-      else if (span > MAX_SPAN) { endText = `${span} adresów - maksymalnie ${MAX_SPAN}`; endBad = true; }
+      else if (span > MAX_SPAN) { endText = `${span} ${plural(span, 'adres', 'adresy', 'adresów')} - maksymalnie ${MAX_SPAN}`; endBad = true; }
       else endText = `${e.note} (wyłącznie) · ${span} ${plural(span, 'adres', 'adresy', 'adresów')}: ${fmtHex(s.address)}-${fmtHex(e.address - 1)}`;
     }
     endNote.textContent = endText;
@@ -327,7 +327,7 @@ export function mount(root, ctx) {
   }
 
   function updateTargetNotes() {
-    usBusNote.textContent = `Magistrala z parametrów skanowania: ${busLabel()}.`;
+    usBusNote.textContent = `Połączenie z parametrów skanowania: ${busLabel()}.`;
     if (writeTarget) writeTarget.textContent = `Cel: ${busLabel()}, Unit ID ${unitIn.value.trim() || '?'} (z parametrów skanowania).`;
   }
 
@@ -338,7 +338,7 @@ export function mount(root, ctx) {
     const unit = parseIntIn(unitIn.value, 0, 255);
     markInvalid(unitIn, unit == null);
     if (unit == null) errs.push('Unit ID musi być liczbą całkowitą 0-255');
-    if (!busSel.value) errs.push('wybierz magistralę');
+    if (!busSel.value) errs.push('wybierz połączenie');
     const s = parseAddr(startIn.value, func);
     const e = parseAddr(endIn.value, func, { end: true });
     markInvalid(startIn, !!s.error);
@@ -414,7 +414,7 @@ export function mount(root, ctx) {
       busSel.value = pick || '';
       busSel.disabled = !ids.length;
       busesReady = ids.length > 0;
-      if (!ids.length) busNotice.replaceChildren(h('div', { class: 'notice notice-warn' }, 'Brak skonfigurowanych magistral - dodaj połączenie w zakładce Połączenia.'));
+      if (!ids.length) busNotice.replaceChildren(h('div', { class: 'notice notice-warn' }, 'Brak skonfigurowanych połączeń - dodaj je w zakładce Połączenia.'));
       updateTargetNotes();
       sync();
       if (ctx.params && ctx.params.scan === '1' && busesReady) manualScan();
@@ -422,7 +422,7 @@ export function mount(root, ctx) {
       if (!alive || e.name === 'AbortError') return;
       busSel.replaceChildren(h('option', { value: '' }, 'Błąd ładowania'));
       busNotice.replaceChildren(h('div', { class: 'notice notice-err' },
-        'Nie udało się pobrać listy magistral: ', e.message, ' ',
+        'Nie udało się pobrać listy połączeń: ', e.message, ' ',
         h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onclick: loadBuses }, 'Spróbuj ponownie')));
       showError(e, 'Magistrale: ');
       sync();
@@ -720,7 +720,7 @@ export function mount(root, ctx) {
     }
     return (res.registers || []).map((r) => {
       const d = r.decoded || {};
-      return [t, r.address, csvCell(r.address_hex || fmtHex(r.address)), csvCell(r.raw_hex), csvNum(r.u16), csvNum(r.i16),
+      return [t, r.address, csvCell(r.address_hex || fmtHex(r.address)), csvCell((r.raw_hex || '').replace(/-{4}/g, 'brak')), csvNum(r.u16), csvNum(r.i16),
         ...ORDERS.map((o) => csvNum(d.float32 && d.float32[o], true)),
         csvNum(d.int32 && d.int32.ABCD), csvNum(d.int32 && d.int32.CDAB),
         csvNum(d.uint32 && d.uint32.ABCD), csvNum(d.uint32 && d.uint32.CDAB),

@@ -422,7 +422,7 @@ export function mount(root, ctx) {
         h('div', { class: 'field inline' }, echoIn,
           h('label', { for: echoIn.id, style: { textTransform: 'none', fontSize: '13px', color: 'var(--text)', letterSpacing: '0' } },
             'Adapter z lokalnym echem')),
-        h('span', { class: 'hint' }, 'Zaznacz, gdy przejściówka odsyła własną transmisję (odbiornik włączony na stałe) - objaw: błędy "odpowiedź nie pasuje do zapytania".')));
+        h('span', { class: 'hint' }, 'Zaznacz, gdy przejściówka odsyła własną transmisję (odbiornik włączony na stałe) - objaw: błędy „odpowiedź ma 0 rejestrów zamiast N” albo „odpowiedź FC… na zapytanie FC…”.')));
 
     const isSerial = () => SERIAL_KINDS.has(kindSel.value);
 
@@ -641,6 +641,7 @@ export function mount(root, ctx) {
     }
 
     const m = track(modal({
+      closeOnBackdrop: false,
       title: isNew ? 'Nowe połączenie' : (locked ? 'Szczegóły połączenia' : 'Edycja połączenia'),
       subtitle: isNew ? 'Port RS-485 albo adres bramki / licznika Modbus TCP' : `${b.name || b.id} (${b.id})`,
       body: formEl,
@@ -657,9 +658,10 @@ export function mount(root, ctx) {
           h('strong', null, 'Urządzenie'), ' to konkretny licznik o danym Unit ID na tym połączeniu - jedna magistrala RS-485 może obsłużyć wiele liczników o różnych adresach.'),
         h('h3', null, 'Typowe ustawienia'),
         h('ul', null,
-          h('li', null, 'Eastron SDM120 / SDM220: ', h('code', null, '2400 8N1'), ' (fabrycznie)'),
-          h('li', null, 'Wiele liczników (Eastron SDM630, Finder, Carlo Gavazzi): ', h('code', null, '9600 8N1')),
-          h('li', null, 'Orno OR-WE-5xx: często ', h('code', null, '9600 8E1')),
+          h('li', null, 'Eastron SDM120: ', h('code', null, '2400 8N1'), ' (fabrycznie); SDM220 / SDM230: 2400 albo 9600 8N1 - sprawdź na wyświetlaczu'),
+          h('li', null, 'Wiele liczników (Eastron SDM630, Carlo Gavazzi): ', h('code', null, '9600 8N1')),
+          h('li', null, 'Orno: często ', h('code', null, '9600 8E1'), ' (OR-WE-525/526: 8N1)'),
+          h('li', null, 'Raspberry Pi 3/4: ', h('code', null, '/dev/serial0'), ' (parzystość E/O wymaga dtoverlay=disable-bt); Raspberry Pi 5: ', h('code', null, '/dev/ttyAMA0')),
           h('li', null, 'Unit ID fabrycznie zwykle ', h('code', null, '1'), '; każdy licznik na magistrali musi mieć inny.')),
         h('h3', null, 'Nazwy portów'),
         h('ul', null,

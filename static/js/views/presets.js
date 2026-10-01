@@ -98,8 +98,8 @@ function orderKeys(obj, order) {
   return Object.fromEntries(entries);
 }
 
-/** Postać kanoniczna: pola w kolejności schematu, rejestry wg adresu (serwer nie zachowuje kolejności kluczy). */
-function canonical(p) {
+/** Postać kanoniczna: pola w kolejności schematu; rejestry wg adresu tylko z sortRegs (przycisk Formatuj). */
+function canonical(p, { sortRegs = false } = {}) {
   if (!isObj(p)) return p;
   const out = orderKeys(p, TOP_ORDER);
   if (isObj(out.serial)) out.serial = orderKeys(out.serial, ['baudrate', 'bytesize', 'parity', 'stopbits']);
@@ -107,16 +107,16 @@ function canonical(p) {
   if (isObj(out.registers)) {
     const addr = (v) => (isObj(v) ? parseAddr(v.address) : null) ?? Infinity;
     const regs = Object.entries(out.registers).map(([k, v]) => [k, isObj(v) ? orderKeys(v, REG_ORDER) : v]);
-    regs.sort((a, b) => (addr(a[1]) === addr(b[1]) ? 0 : addr(a[1]) < addr(b[1]) ? -1 : 1));
+    if (sortRegs) regs.sort((a, b) => (addr(a[1]) === addr(b[1]) ? 0 : addr(a[1]) < addr(b[1]) ? -1 : 1));
     out.registers = Object.fromEntries(regs);
   }
   return out;
 }
 
 /** JSON presetu: pola po jednym w linii, każdy rejestr w jednej linii (jak pliki biblioteki). */
-function formatPreset(obj) {
+function formatPreset(obj, opts) {
   if (!isObj(obj)) return JSON.stringify(obj, null, 2);
-  const entries = Object.entries(canonical(obj));
+  const entries = Object.entries(canonical(obj, opts));
   if (!entries.length) return '{}';
   const lines = ['{'];
   entries.forEach(([k, v], i) => {
@@ -457,7 +457,7 @@ export function mount(root, ctx) {
     const meta = [regWord(p.register_count || 0), phasesText(p.phases)].filter(Boolean).join(' · ');
     const badges = [
       p.valid === false ? h('span', { class: 'badge badge-err', title: (p.errors || []).join('\n') }, 'Błędny') : null,
-      p.overrides_builtin ? h('span', { class: 'badge badge-info' }, 'Nadpisuje wbudowany') : null,
+      p.overrides_builtin ? h('span', { class: 'badge badge-info' }, 'Przesłania wbudowany') : null,
     ].filter(Boolean);
     return h('button', {
       type: 'button', class: 'list-item pr-item' + (selected ? ' selected' : ''),
@@ -516,6 +516,16 @@ export function mount(root, ctx) {
     } catch (e) {
       if (e.name === 'AbortError' || destroyed || myAc !== detailAc) return;
       detailAc = null;
+      if (e.status === 422 && e.data && typeof e.data.text === 'string') {
+        // plik z błędem składni JSON - otwórz jego treść w edytorze do naprawy
+        S.sel = { kind: 'preset', id, builtin: false, raw: {} };
+        loadEditor(e.data.text);
+        S.tab = 'editor';
+        renderList();
+        renderDetail();
+        toast('Plik presetu zawiera błąd składni JSON - popraw go w edytorze i zapisz', 'err');
+        return;
+      }
       S.sel = { kind: 'error', id };
       renderList();
       renderDetailError(id, e);
@@ -644,7 +654,7 @@ export function mount(root, ctx) {
     } else {
       tags.push(h('span', { class: 'badge ' + (sel.builtin ? 'badge-muted' : 'badge-ok') }, sel.builtin ? 'Wbudowany' : 'Mój preset'));
       tags.push(h('code', { class: 'pr-id', title: 'Identyfikator (nazwa pliku)' }, sel.id));
-      if (sum && sum.overrides_builtin) tags.push(h('span', { class: 'badge badge-info' }, 'Nadpisuje wbudowany'));
+      if (sum && sum.overrides_builtin) tags.push(h('span', { class: 'badge badge-info' }, 'Przesłania wbudowany'));
       if (sel.builtin && sum && sum.valid === false) tags.push(h('span', { class: 'badge badge-err' }, 'Błędny'));
     }
     tags.push(h('span', { class: 'muted small' }, [regWord(regs), phasesText(d.phases)].filter(Boolean).join(' · ')));
@@ -753,9 +763,17 @@ export function mount(root, ctx) {
       rows.length ? registerTable(rows, offset) : h('p', { class: 'pr-none' }, 'Preset nie ma jeszcze rejestrów.'),
     ];
     if (sel.kind === 'preset' && sel.builtin) {
-      out.push(h('details', { class: 'pr-raw' },
-        h('summary', null, 'Pokaż JSON'),
-        h('pre', { class: 'code' }, formatPreset(d))));
+      const pre = h('pre', { class: 'code' }, formatPreset(d));
+      out.push(h('details', {
+        class: 'pr-raw',
+        ontoggle: async (e) => {
+          if (!e.currentTarget.open || pre.dataset.exact) return;
+          try {
+            const r = await fetch(`/api/presets/${enc(sel.id)}?raw=1`);
+            if (r.ok) { pre.textContent = await r.text(); pre.dataset.exact = '1'; }
+          } catch { /* zostaje wersja sformatowana */ }
+        },
+      }, h('summary', null, 'Pokaż JSON'), pre));
     }
     return h('div', { class: 'pr-preview' }, out);
   }
@@ -827,7 +845,7 @@ export function mount(root, ctx) {
     formatBtn.addEventListener('click', () => {
       const p = parseText(ta.value);
       if (!p.ok) { validateNow(); toast('Nie można sformatować - popraw błąd składni JSON', 'err'); gotoError(); return; }
-      replaceAll(ta, formatPreset(p.value));
+      replaceAll(ta, formatPreset(p.value, { sortRegs: true }));
     });
     const revertBtn = S.sel.kind === 'preset'
       ? h('button', { type: 'button', class: 'btn btn-ghost btn-sm' }, 'Cofnij zmiany') : null;
@@ -1138,7 +1156,7 @@ export function mount(root, ctx) {
     const name = `${(typeof raw.name === 'string' && raw.name.trim()) || sel.id} (kopia)`;
     await busy(button, async () => {
       try {
-        const r = await post('/api/presets', { ...raw, _save_as: name }, { signal: ac.signal });
+        const r = await post('/api/presets', { copy_from: sel.id, _save_as: name }, { signal: ac.signal });
         if (destroyed) return;
         toast(`Skopiowano do "Moje presety" jako "${r.id}"`);
         await loadList();
@@ -1210,12 +1228,19 @@ export function mount(root, ctx) {
     });
   }
 
-  function downloadJson() {
+  async function downloadJson() {
     const sel = S.sel;
     if (!sel) return;
     let text;
     if (sel.kind === 'preset' && sel.builtin) {
-      text = formatPreset(sel.raw);
+      try {
+        const r = await fetch(`/api/presets/${enc(sel.id)}?raw=1`, { signal: ac.signal });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        text = (await r.text()).replace(/\n$/, '');
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        text = formatPreset(sel.raw);
+      }
     } else {
       const p = parseText(S.text);
       text = p.ok && isObj(p.value) ? formatPreset(stripMeta(p.value)) : S.text;
@@ -1422,8 +1447,8 @@ const BYTE_ORDER_EXAMPLE = [
   ['DCBA', 'little-endian, całkowicie odwrócona', '0x0000', '0x6643'],
 ];
 const EXAMPLE = `{
-  "name": "Eastron SDM630",
-  "manufacturer": "Eastron", "model": "SDM630", "description": "...",
+  "name": "Mój licznik",
+  "manufacturer": "Producent", "model": "XYZ-3", "description": "...",
   "phases": 3,
   "register_type": "input",
   "byte_order": "ABCD",

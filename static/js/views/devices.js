@@ -251,8 +251,12 @@ export function mount(root, ctx) {
       : [d.bus, h('span', { class: 'warn-text' }, ' (nieznane połączenie)')];
 
     let lastText = '-';
-    if (st.ts) {
-      lastText = [fmtAge(st.age), st.duration_ms != null ? h('span', { class: 'muted' }, ` (${Math.round(st.duration_ms)} ms)`) : null];
+    if (st.last_ok_ts) {
+      lastText = [fmtAge(Date.now() / 1000 - st.last_ok_ts),
+        state_ === 'ok' && st.duration_ms != null ? h('span', { class: 'muted' }, ` (${Math.round(st.duration_ms)} ms)`) : null,
+        state_ !== 'ok' && st.ts ? h('span', { class: 'muted' }, ` · ostatnia próba ${fmtAge(st.age)}`) : null];
+    } else if (st.ts) {
+      lastText = [h('span', { class: 'warn-text' }, 'nigdy'), h('span', { class: 'muted' }, ` · ostatnia próba ${fmtAge(st.age)}`)];
     } else if (d.enabled && d.preset) {
       lastText = h('span', { class: 'muted' }, 'jeszcze nie odczytano');
     }
@@ -272,7 +276,7 @@ export function mount(root, ctx) {
         h('dt', null, 'Połączenie'), h('dd', null, busText),
         h('dt', null, 'Unit ID'), h('dd', null, String(d.unit)),
         h('dt', null, 'Interwał'), h('dd', null, `${num(d.interval)} s`),
-        h('dt', null, 'Ostatni odczyt'), h('dd', null, lastText),
+        h('dt', null, 'Ostatni udany odczyt'), h('dd', null, lastText),
         h('dt', null, 'Odczyty'), h('dd', null, `${st.polls ?? 0}`,
           h('span', { class: st.failures ? 'err-text' : 'muted' }, ` / błędy: ${st.failures ?? 0}`))));
 
@@ -445,7 +449,7 @@ export function mount(root, ctx) {
       else if (!p) parts.push('Preset nie istnieje - wybierz inny.');
       else {
         if (p.valid === false) parts.push(`Preset zawiera błędy: ${(p.errors || []).slice(0, 2).join('; ')}`);
-        parts.push(`${p.register_count} rejestrów, ${p.phases === 1 ? '1 faza' : p.phases ? `${p.phases} fazy` : 'liczba faz nieznana'}`);
+        parts.push(`${p.register_count} ${plural(p.register_count, 'rejestr', 'rejestry', 'rejestrów')}, ${p.phases === 1 ? '1 faza' : p.phases ? `${p.phases} fazy` : 'liczba faz nieznana'}`);
         const s = serialText(p.serial);
         if (s) {
           parts.push(`ustawienia fabryczne ${s}`);
@@ -592,7 +596,8 @@ export function mount(root, ctx) {
           fill(detectBox, h('div', { class: 'notice notice-info' }, 'Rozpoznawanie anulowane.'));
           return;
         }
-        await showCandidates(((job.result || {}).candidates) || [], v);
+        const result = job.result || {};
+        await showCandidates(result.candidates || [], v, result.checked);
       } catch (e) {
         if (e.name === 'AbortError') {
           fill(detectBox, h('div', { class: 'notice notice-info' }, 'Rozpoznawanie anulowane.'));
@@ -607,7 +612,8 @@ export function mount(root, ctx) {
       }
     }
 
-    async function showCandidates(cands, v) {
+    async function showCandidates(cands, v, checkedCount) {
+      const checked = checkedCount ?? cands.length;
       const good = cands.filter((c) => c.score > 0);
       if (!good.length) {
         fill(detectBox, h('div', { class: 'notice notice-warn' },
@@ -646,7 +652,7 @@ export function mount(root, ctx) {
           vals.length ? h('div', { class: 'cand-vals small' }, vals) : null);
       });
       fill(detectBox,
-        h('div', { class: 'small muted' }, `Dopasowanie presetów do Unit ID ${v.unit} - najlepsze ${top.length} z ${cands.length} sprawdzonych. Wybierz właściwy przyciskiem "Użyj":`),
+        h('div', { class: 'small muted' }, `Dopasowanie presetów do Unit ID ${v.unit} - najlepsze ${top.length} z ${checked} sprawdzonych. Wybierz właściwy przyciskiem "Użyj":`),
         h('ol', { class: 'cand-list' }, items));
     }
 
@@ -702,6 +708,7 @@ export function mount(root, ctx) {
     }
 
     const m = modal({
+      closeOnBackdrop: false,
       title: isNew ? 'Nowe urządzenie' : (locked ? 'Szczegóły urządzenia' : 'Edycja urządzenia'),
       subtitle: isNew ? 'Licznik o danym Unit ID na wybranym połączeniu, odczytywany wg presetu' : `${d.name || d.id} (${d.id})`,
       body: formEl,
@@ -709,7 +716,7 @@ export function mount(root, ctx) {
         if (detectAc) detectAc.abort();
         if (form && form.m === m) form = null;
         // po zamknięciu formularza z linku (#devices?new=1) nie otwieraj go ponownie przy odświeżeniu
-        if (!destroyed && /^#devices\?/.test(location.hash)) history.replaceState(null, '', '#devices');
+        if (!destroyed && /^#devices\?/.test(location.hash)) history.replaceState(history.state, '', '#devices');
       },
     });
     form = { m, close: () => m.close() };

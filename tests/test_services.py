@@ -139,14 +139,14 @@ def test_read_range_skips_holes():
     bus = FakeBus(strict=True)
     bus.put("input", 0, [1, 2, 3, 4])
     bus.put("input", 10, [5, 6])
-    vals, err, req = read_range(bus, 1, "input", 0, 12)
+    vals, err, req, _, covered = read_range(bus, 1, "input", 0, 12)
     assert err is None
     assert vals == [1, 2, 3, 4, None, None, None, None, None, None, 5, 6]
 
 
 def test_read_range_stops_on_timeout():
     bus = FakeBus(silent_units={3})
-    vals, err, req = read_range(bus, 3, "input", 0, 300)
+    vals, err, req, _, _ = read_range(bus, 3, "input", 0, 300)
     assert "timeout" in err and req == 1 and all(v is None for v in vals)
 
 
@@ -162,3 +162,35 @@ def test_scan_units_job():
     with pytest.raises(RuntimeError):
         jobs.start("x", lambda j: time.sleep(0.3))
         jobs.start("x", lambda j: None)
+
+
+def test_scan_reports_exception_and_stops_on_illegal_function():
+    from conftest import FakeModbusError
+    from modbus_dash.scanner import scan
+
+    class Fc1Bus(FakeBus):
+        def read_registers(self, unit, function, address, count):
+            self.calls.append((unit, function, address, count))
+            raise FakeModbusError("exception", 1, "Wyjątek Modbus 01: niedozwolona funkcja")
+
+    bus = Fc1Bus()
+    res = scan(bus, 1, "holding", 0, 200)
+    assert res["readable"] == 0 and res["exception_code"] == 1 and "nie obsługuje" in res["error"]
+    assert len(bus.calls) == 1
+
+
+def test_scan_all_rejected_reports_last_exception():
+    from modbus_dash.scanner import scan
+    bus = FakeBus(strict=True)
+    res = scan(bus, 1, "input", 0, 4)
+    assert res["readable"] == 0 and "odrzucone" in res["error"] and res["exception_code"] == 2
+
+
+def test_cancelled_job_does_not_block_new_one():
+    jobs = JobManager()
+    ev = __import__("threading").Event()
+    job = jobs.start("units", lambda j: ev.wait(2))
+    jobs.cancel(job.id)
+    job2 = jobs.start("units", lambda j: None)
+    assert job2.id != job.id
+    ev.set()

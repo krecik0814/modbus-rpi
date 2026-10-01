@@ -236,6 +236,12 @@ def create_app(ctx):
 
     @app.get("/api/presets/<preset_id>")
     def api_get_preset(preset_id):
+        if request.args.get("raw") in ("1", "true"):
+            # dokładna treść pliku (przeglądarka gubi precyzję liczb 64-bit w JSON.parse)
+            text = ctx.presets.get_text(preset_id) if valid_id(preset_id) else None
+            if text is None:
+                raise ApiError("preset nie znaleziony", 404)
+            return Response(text, mimetype="application/json; charset=utf-8")
         p = ctx.presets.get_raw(preset_id) if valid_id(preset_id) else None
         if p is None:
             raise ApiError("preset nie znaleziony", 404)
@@ -244,6 +250,15 @@ def create_app(ctx):
     @app.post("/api/presets")
     def api_create_preset():
         data = _body()
+        source = data.get("copy_from")
+        if source is not None:
+            # kopia po stronie serwera - liczby (np. uint64) bez utraty precyzji
+            raw = ctx.presets.get_raw(source) if isinstance(source, str) and valid_id(source) else None
+            if raw is None:
+                raise ApiError("preset źródłowy nie znaleziony", 404)
+            name = data.get("_save_as") or f"{raw.get('name') or source} (kopia)"
+            data = {k: v for k, v in raw.items() if not str(k).startswith("_")}
+            data["name"] = name
         name = data.get("_save_as") or data.get("name") or "preset"
         preset_id = ctx.presets.unique_id(name)
         ctx.presets.save(preset_id, data)
@@ -481,7 +496,7 @@ def create_app(ctx):
         res = scanner.scan(bus, unit_of(data), function, start, end, step)
         if res["readable"] == 0:
             raise ApiError(res["error"] or "urządzenie nie zwróciło żadnych danych z tego zakresu", 502,
-                           unreadable=res["unreadable"])
+                           unreadable=res["unreadable"], exception_code=res["exception_code"])
         return jsonify(res)
 
     @app.post("/api/scan/preset")

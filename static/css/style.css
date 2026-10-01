@@ -57,8 +57,8 @@ a{color:var(--blue)}
   .topbar{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:20;background:var(--bg2);border-bottom:1px solid var(--border);padding:8px 12px}
   .topbar-title{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--white)}
   .topbar-status{margin-left:auto;font-size:11px;font-family:var(--mono);color:var(--text2);display:flex;align-items:center;gap:6px}
-  .sidebar{transform:translateX(-100%);transition:transform .2s ease;box-shadow:0 0 40px #000}
-  body.nav-open .sidebar{transform:none}
+  .sidebar{transform:translateX(-100%);visibility:hidden;transition:transform .2s ease,visibility 0s linear .2s;box-shadow:0 0 40px #000}
+  body.nav-open .sidebar{transform:none;visibility:visible;transition:transform .2s ease}
   .main{margin-left:0}
   .page-header{padding:14px 16px}
   .page-content{padding:16px}
@@ -105,12 +105,6 @@ input,textarea{max-width:100%}
 .split{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:20px;align-items:start}
 @media (max-width:1200px){.grid-4{grid-template-columns:repeat(3,1fr)}}
 @media (max-width:900px){.grid-3,.grid-4{grid-template-columns:repeat(2,1fr)}.split{grid-template-columns:1fr}}
-@media (max-width:480px){
-  .grid-3,.grid-4{grid-template-columns:repeat(2,1fr)}
-  .grid.charts,.grid.single-sm{grid-template-columns:1fr}
-  .val-card .val{font-size:19px}
-  .big-stat .val{font-size:22px}
-}
 .group-header{font-size:11px;font-weight:600;color:var(--cyan);text-transform:uppercase;letter-spacing:.8px;padding:14px 0 8px;border-bottom:1px solid var(--border);margin:8px 0 10px}
 .group-header:first-child{margin-top:0}
 
@@ -122,13 +116,20 @@ input,textarea{max-width:100%}
 .val-card .acc{position:absolute;top:0;left:0;width:3px;height:100%}
 .val-card.is-error .val{color:var(--text3)}
 .val-card.is-error{border-style:dashed}
-.stale .val-card,.stale .chart-card{opacity:.55}
+.stale .val-card,.stale .chart-card,.stale .big-stat{opacity:.55}
 .big-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px}
 .big-stat{background:linear-gradient(160deg,var(--bg3),var(--bg2));border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
 .big-stat .lbl{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
 .big-stat .val{font-size:28px;font-weight:700;font-family:var(--mono);color:var(--white);font-variant-numeric:tabular-nums;margin-top:4px}
 .big-stat .unt{font-size:13px;color:var(--text3);margin-left:4px}
 
+@media (max-width:480px){
+  .grid-3,.grid-4{grid-template-columns:repeat(2,1fr)}
+  .grid.charts,.grid.single-sm{grid-template-columns:1fr}
+  .val-card .val{font-size:19px}
+  .big-stat{min-width:0}
+  .big-stat .val{font-size:clamp(16px,5.6vw,22px);overflow-wrap:anywhere}
+}
 .chart-card{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px 0;overflow:hidden;cursor:pointer;transition:border-color .15s,transform .1s;display:flex;flex-direction:column}
 .chart-card:hover{border-color:var(--border2);transform:translateY(-1px)}
 .chart-card .head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
@@ -201,7 +202,7 @@ code{background:var(--bg3);padding:1px 6px;border-radius:4px;font-family:var(--m
 .errors{margin-top:8px;font-size:12px;color:var(--red);list-style:none}
 .errors li{padding:2px 0}
 .errors li::before{content:"✕ ";}
-.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:13px}
+.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;font-size:13px}
 .kv dt{color:var(--text3)}
 .kv dd{color:var(--text);font-family:var(--mono);word-break:break-word}
 
@@ -495,3 +496,6 @@ code{background:var(--bg3);padding:1px 6px;border-radius:4px;font-family:var(--m
   .v-help .help-toc ol{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr))}
 }
 @media (max-width:860px){.v-help .help-sec{scroll-margin-top:64px}.v-help .help-top{left:16px}}
+
+/* ── poprawki po przeglądzie ── */
+.v-integrations .int-feat .badge{white-space:normal}

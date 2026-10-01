@@ -7,7 +7,8 @@ import { h, mount as fill, get, pageHeader } from '../core.js';
 
 const START = `
 <ol>
-  <li><b>Instalacja:</b> <code>pip install -r requirements.txt</code>. Na Raspberry Pi najwygodniej uruchomić
+  <li><b>Instalacja:</b> <code>python3 -m venv .venv</code>, <code>source .venv/bin/activate</code> (Windows:
+    <code>.venv\Scripts\activate</code>), potem <code>pip install -r requirements.txt</code>. Na Raspberry Pi najwygodniej uruchomić
     <code>bash deploy/install-rpi.sh</code> - skrypt tworzy środowisko <code>.venv</code>, dodaje użytkownika do grupy
     <code>dialout</code> i instaluje usługę systemd.</li>
   <li><b>Próba bez sprzętu:</b> <code>python app.py</code> uruchamia wbudowany symulator licznika 3-fazowego
@@ -65,8 +66,9 @@ const UART = `
 sudo reboot
 ls -l /dev/serial0        # sprawdź, na który port wskazuje alias</pre>
 <ul>
-  <li><b><code>/dev/serial0</code></b> to alias na UART pinów GPIO, niezależny od modelu - używaj go w
-    <code>--serial</code> i w zakładce Połączenia.</li>
+  <li><b><code>/dev/serial0</code></b> na RPi 3, 4 i Zero wskazuje UART pinów GPIO - używaj go w <code>--serial</code>
+    i w zakładce Połączenia. Na RPi 5 <code>serial0</code> wskazuje złącze debug (<code>ttyAMA10</code>), więc tam podaj
+    <code>/dev/ttyAMA0</code>.</li>
   <li><b>RPi 3, 4, Zero W, Zero 2 W:</b> pełny UART (PL011, <code>/dev/ttyAMA0</code>) obsługuje domyślnie Bluetooth,
     a <code>serial0</code> wskazuje na mini-UART (<code>/dev/ttyS0</code>). <b>Mini-UART nie obsługuje parzystości
     ani 2 bitów stopu</b> (jądro po cichu przełącza go na 8N1), więc liczniki 8E1 (np. Orno) nie odpowiedzą - aplikacja
@@ -118,12 +120,12 @@ const FUNCTIONS_HTML = `
     <tr><td>FC04</td><td>Read Input Registers - rejestry 16-bit tylko do odczytu</td><td>pomiary: Eastron, Carlo Gavazzi, Finder i inne</td></tr>
     <tr><td>FC05</td><td>Write Single Coil - zapis jednego bitu</td><td>sterowanie przekaźnikiem</td></tr>
     <tr><td>FC06</td><td>Write Single Register - zapis jednego rejestru</td><td>proste ustawienia</td></tr>
-    <tr><td>FC15</td><td>Write Multiple Coils - zapis wielu bitów</td><td>sterowanie wieloma wyjściami</td></tr>
+    <tr><td>FC15</td><td>Write Multiple Coils - zapis wielu bitów</td><td>sterowanie wieloma wyjściami (aplikacja zapisuje cewki pojedynczo przez FC05)</td></tr>
     <tr><td>FC16</td><td>Write Multiple Registers - zapis wielu rejestrów</td><td>ustawienia 32-bit, np. Eastron (float32) zmienia się tylko przez FC16</td></tr>
     <tr><td>FC43</td><td>Read Device Identification (MEI 0x0E)</td><td>producent, model, wersja - obsługuje tylko część liczników</td></tr>
   </tbody>
 </table></div>
-<p>Zapis (FC05, FC06, FC15, FC16) jest wyłączony, dopóki nie uruchomisz aplikacji z <code>--allow-write</code>.
+<p>Zapis (FC05, FC06, FC16) jest wyłączony, dopóki nie uruchomisz aplikacji z <code>--allow-write</code>.
 Zmiana Unit ID albo prędkości licznika przez zapis może go "zgubić" - zanotuj nowe wartości.</p>
 <p>Kody wyjątków w odpowiedzi: <b>01</b> niedozwolona funkcja, <b>02</b> niedozwolony adres, <b>03</b> niedozwolona
 wartość (np. za dużo rejestrów naraz), <b>04</b> błąd urządzenia, <b>06</b> urządzenie zajęte, <b>0A</b>/<b>0B</b>
@@ -224,7 +226,7 @@ const DETECT = `
   <li><b>Rozpoznaj licznik</b> w formularzu urządzenia (<a href="#devices">Urządzenia</a>) czyta rejestry testowe
     presetów z biblioteki i ocenia, czy wartości mają sens (napięcie ok. 230 V, częstotliwość ok. 50 Hz). Wynik to
     lista kandydatów z oceną 0-100%. Kilka modeli może mieć tę samą mapę rejestrów - wybierz zgodny z tabliczką.</li>
-  <li>Ustawienia fabryczne najczęściej: Unit ID 1, 9600 8N1 (Eastron SDM120: 2400 8N1; Orno: 9600 8E1). Wiele
+  <li>Ustawienia fabryczne najczęściej: Unit ID 1, 9600 8N1 (Eastron SDM120: 2400 8N1; Orno: często 9600 8E1, OR-WE-525/526: 8N1). Wiele
     liczników pokazuje adres i prędkość w menu na wyświetlaczu - tam też można je zmienić.</li>
   <li>Kilka liczników z tym samym fabrycznym Unit ID: podłączaj je po jednym i każdemu nadaj inny adres w menu
     licznika (albo zapisem z <code>--allow-write</code>), zanim połączysz je w jedną magistralę.</li>
@@ -253,7 +255,7 @@ const SECURITY = `
   <tbody>
     <tr><td><code>--auth USER:HASŁO</code></td><td>logowanie HTTP Basic do panelu i API; zamiast flagi można ustawić zmienną <code>MODBUS_DASH_AUTH</code> (np. w usłudze systemd)</td><td>zawsze, gdy panel jest dostępny w sieci</td></tr>
     <tr><td><code>--host 127.0.0.1</code></td><td>nasłuch tylko lokalnie; z innego komputera przez tunel SSH: <code>ssh -L 5000:localhost:5000 pi@raspberrypi.local</code></td><td>gdy panel ma być prywatny</td></tr>
-    <tr><td><code>--allow-write</code></td><td>włącza zapis rejestrów i cewek (FC05, FC06, FC15, FC16) z interfejsu</td><td>tylko na czas konfiguracji licznika</td></tr>
+    <tr><td><code>--allow-write</code></td><td>włącza zapis rejestrów i cewek (FC05, FC06, FC16) z interfejsu</td><td>tylko na czas konfiguracji licznika</td></tr>
     <tr><td><code>--debug</code></td><td>debugger Werkzeug pozwala wykonać dowolny kod, dlatego aplikacja wymusza wtedy nasłuch na 127.0.0.1</td><td>tylko przy programowaniu</td></tr>
   </tbody>
 </table></div>
@@ -263,7 +265,7 @@ const SECURITY = `
     z HTTPS (np. Caddy, nginx) albo korzystaj z VPN (WireGuard, Tailscale).</li>
   <li>Nie wystawiaj portu panelu ani Modbus TCP bezpośrednio do Internetu - protokół Modbus nie ma żadnych zabezpieczeń.</li>
   <li>API jest chronione przed CSRF: zapytania zmieniające stan muszą mieć <code>Content-Type: application/json</code>
-    i nie mogą pochodzić z obcej strony. Presetów wbudowanych nie da się nadpisać ani usunąć.</li>
+    i nie mogą pochodzić z obcej strony. Plików biblioteki wbudowanej nie da się zmienić ani usunąć przez API; własny preset o tym samym identyfikatorze przesłania wbudowany, dopóki go nie usuniesz.</li>
   <li>Symulator nasłuchuje na wszystkich interfejsach (port 5020). Na docelowym urządzeniu używaj <code>--no-sim</code>
     albo <code>--serial</code>/<code>--tcp</code> (wtedy symulator jest domyślnie wyłączony).</li>
 </ul>`;
@@ -272,11 +274,12 @@ const TROUBLE = `
 <div class="table-wrap"><table class="tbl help-trouble">
   <thead><tr><th scope="col">Objaw</th><th scope="col">Przyczyna</th><th scope="col">Rozwiązanie</th></tr></thead>
   <tbody>
-    <tr><td>Brak odpowiedzi (timeout)</td><td>zły Unit ID, prędkość lub parzystość</td><td>sprawdź menu licznika; <i>Szukaj urządzeń</i> w Skanerze; typowo 9600 8N1, Eastron SDM120 2400 8N1, Orno 9600 8E1</td></tr>
+    <tr><td>Brak odpowiedzi (timeout)</td><td>zły Unit ID, prędkość lub parzystość</td><td>sprawdź menu licznika; <i>Szukaj urządzeń</i> w Skanerze; typowo 9600 8N1, Eastron SDM120 2400 8N1, Orno często 9600 8E1</td></tr>
     <tr><td>Timeout dla każdego Unit ID</td><td>zamienione A/B, brak GND, licznik bez zasilania, zły port</td><td>zamień A z B; sprawdź <code>ls -l /dev/serial0</code>; diody TX/RX adaptera powinny migać</td></tr>
     <tr><td>Timeout na RPi, port otwiera się poprawnie</td><td>konsola na UART albo mini-UART (RPi 3/4)</td><td><code>raspi-config</code>: login shell NIE; <code>dtoverlay=disable-bt</code></td></tr>
-    <tr><td><code>Permission denied</code> przy otwieraniu portu</td><td>brak uprawnień do portu</td><td><code>sudo usermod -a -G dialout $USER</code>, wyloguj się i zaloguj</td></tr>
-    <tr><td><code>could not open port</code>, brak pliku</td><td>zła nazwa portu albo UART wyłączony</td><td><code>ls /dev/serial* /dev/ttyUSB*</code>; listę portów pokazuje zakładka Połączenia</td></tr>
+    <tr><td>„Brak uprawnień do portu …”</td><td>brak uprawnień do portu</td><td><code>sudo usermod -a -G dialout $USER</code>, wyloguj się i zaloguj</td></tr>
+    <tr><td>„Port … nie istnieje”</td><td>zła nazwa portu albo UART wyłączony</td><td><code>ls /dev/serial* /dev/ttyUSB*</code>; listę portów pokazuje zakładka Połączenia</td></tr>
+    <tr><td>„Błąd transmisji: odpowiedź ma 0 rejestrów zamiast N”</td><td>przejściówka z lokalnym echem odsyła własną transmisję</td><td>zaznacz „Adapter z lokalnym echem” w ustawieniach połączenia albo uruchom z <code>--local-echo</code></td></tr>
     <tr><td>Wyjątek 01 (niedozwolona funkcja)</td><td>licznik nie obsługuje FC04 albo FC03</td><td>zmień typ rejestrów (Input/Holding) w skanerze albo <code>register_type</code> w presecie</td></tr>
     <tr><td>Wyjątek 02 (niedozwolony adres)</td><td>rejestr nie istnieje w tym modelu albo zapytanie obejmuje dziurę w mapie</td><td>sprawdź adres (0-based?) i wersję licznika; aplikacja sama dzieli odrzucone bloki na mniejsze</td></tr>
     <tr><td>Wyjątek 03 (niedozwolona wartość)</td><td>za dużo rejestrów w jednym zapytaniu</td><td>zmniejsz <code>"read": {"max_block": 32}</code> w presecie</td></tr>
@@ -298,12 +301,12 @@ const CLI_ROWS = [
   ['--port', '5000', 'port HTTP panelu'],
   ['--auth USER:HASŁO', 'brak', 'logowanie HTTP Basic (lub zmienna MODBUS_DASH_AUTH)'],
   ['--allow-write', 'wyłączone', 'zezwala na zapis rejestrów i cewek z interfejsu'],
-  ['--data-dir', './data', 'katalog na konfigurację (config.json) i historię (history.sqlite)'],
-  ['--presets-dir', './presets', 'katalog presetów użytkownika'],
+  ['--data-dir', '<katalog aplikacji>/data', 'katalog na konfigurację (config.json) i historię (history.sqlite)'],
+  ['--presets-dir', '<katalog aplikacji>/presets', 'katalog presetów użytkownika'],
   ['--no-history', 'wyłączone', 'nie zapisuje historii w SQLite (zostaje bufor w pamięci)'],
   ['--debug', 'wyłączone', 'tryb debug Flask; wymusza nasłuch na 127.0.0.1'],
   ['--log-level', 'INFO', 'DEBUG, INFO, WARNING albo ERROR'],
-  ['Połączenie Modbus (magistrala default)'],
+  ['Połączenie Modbus („default”)'],
   ['--serial PORT', 'brak', 'port RS-485, np. /dev/serial0, /dev/ttyUSB0, COM3'],
   ['--baudrate', '9600', 'prędkość portu szeregowego'],
   ['--parity', 'N', 'parzystość: N, E albo O'],
@@ -468,6 +471,10 @@ export function mount(root, ctx) {
       if (sec.getBoundingClientRect().top <= 120) current = id;
       else break;
     }
+    // ostatnia sekcja nie przewinie się do góry - na dole strony podświetl ją
+    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+      current = secList[secList.length - 1][0];
+    }
     setCurrent(current);
   }
   let raf = 0;
@@ -554,7 +561,7 @@ function metersSection(ctx, signal, alive) {
     if (!all) return;
     const tokens = norm(search.value).split(/\s+/).filter(Boolean);
     const rows = tokens.length ? all.filter((p) => tokens.every((t) => p._hay.includes(t))) : all;
-    count.textContent = tokens.length ? `Pokazano ${rows.length} z ${all.length}` : `${all.length} modeli`;
+    count.textContent = tokens.length ? `Pokazano ${rows.length} z ${all.length}` : `${all.length} ${all.length === 1 ? 'model' : (all.length % 10 >= 2 && all.length % 10 <= 4 && (all.length % 100 < 12 || all.length % 100 > 14)) ? 'modele' : 'modeli'}`;
     if (!rows.length) {
       fill(tableBox, h('div', { class: 'empty help-empty' },
         h('p', null, all.length ? `Brak liczników pasujących do „${search.value.trim()}”.` : 'Biblioteka presetów jest pusta.'),

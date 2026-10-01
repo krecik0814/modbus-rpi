@@ -33,7 +33,10 @@ export function mount(root, ctx) {
     detail: null,        // {key, chart, modal}
     historyAt: 0,
     loadingHistory: false,
+    histSeq: 0,
+    histKey: null,
   };
+  let devicesFailed = false;
   const historyAvailable = !!(ctx.info && ctx.info.features && ctx.info.features.history);
 
   // ── szkielet ──────────────────────────────────────────────
@@ -59,9 +62,14 @@ export function mount(root, ctx) {
     try {
       state.devices = await get('/api/devices');
     } catch (e) {
-      fill(body, h('div', { class: 'notice notice-err' }, `Nie udało się pobrać listy urządzeń: ${e.message}`));
+      devicesFailed = true;
+      header.querySelector('.actions').hidden = true;
+      fill(body, h('div', { class: 'notice notice-err' },
+        `Nie udało się pobrać listy urządzeń: ${e.message}. Ponawiam...`));
       return;
     }
+    devicesFailed = false;
+    header.querySelector('.actions').hidden = false;
     if (!state.devices.length) {
       header.querySelector('.actions').hidden = true;
       fill(body, emptyState('Brak skonfigurowanych urządzeń. Dodaj licznik albo znajdź go skanerem.', [
@@ -88,6 +96,8 @@ export function mount(root, ctx) {
 
   function resetLayout() {
     destroyCharts();
+    fill(statusLine);
+    fill(notice);
     state.series = {};
     state.lastTs = 0;
     state.built = null;
@@ -105,26 +115,35 @@ export function mount(root, ctx) {
   }
   function updateModeButtons() {
     for (const b of modeBtns.children) b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode));
-    rangeSel.hidden = state.mode !== 'charts' && !state.detail;
+    // zakres jest widoczny zawsze - dotyczy także eksportu CSV
+    const label = (RANGES.find(([s]) => s === state.range) || [0, `${state.range} s`])[1];
+    csvBtn.title = `Eksport CSV: ostatnie ${label}`;
   }
   function setRange(sec) {
     state.range = sec;
     store.set('dash.range', sec);
     state.series = {};
     state.lastTs = 0;
+    state.historyAt = 0;
+    updateModeButtons();
     loadHistory();
   }
 
   // ── dane ──────────────────────────────────────────────────
   const poller = new Poller(async () => {
-    if (!state.deviceId) return;
-    let data;
-    try {
-      data = await get(`/api/devices/${enc(state.deviceId)}/values`);
-    } catch (e) {
-      renderStatus(null, e.message);
+    if (!state.deviceId) {
+      if (devicesFailed) await loadDevices();
       return;
     }
+    const id = state.deviceId;
+    let data;
+    try {
+      data = await get(`/api/devices/${enc(id)}/values`);
+    } catch (e) {
+      if (id === state.deviceId) renderStatus(null, e.message);
+      return;
+    }
+    if (id !== state.deviceId) return; // odpowiedź dla poprzednio wybranego urządzenia
     state.data = data;
     const ts = data.status && data.status.ts;
     if (ts && ts > state.lastTs && data.status.state === 'ok') {
@@ -146,13 +165,16 @@ export function mount(root, ctx) {
   }
 
   async function loadHistory() {
-    if (!state.deviceId || state.loadingHistory) return;
+    if (!state.deviceId) return;
     if (state.mode !== 'charts' && !state.detail) { state.historyAt = 0; return; }
+    const id = state.deviceId, range = state.range, key = `${id}|${range}`;
+    if (state.loadingHistory && state.histKey === key) return; // to samo zapytanie już trwa
+    const seq = ++state.histSeq;
     state.loadingHistory = true;
-    const id = state.deviceId;
+    state.histKey = key;
     try {
-      const res = await get(`/api/devices/${enc(id)}/history?seconds=${state.range}&max_points=800`);
-      if (id !== state.deviceId) return;
+      const res = await get(`/api/devices/${enc(id)}/history?seconds=${range}&max_points=800`);
+      if (seq !== state.histSeq) return; // nowsze zapytanie (inne urządzenie lub zakres)
       const series = {};
       res.keys.forEach((k, i) => { series[k] = res.points.map((p) => [p[0], p[i + 1]]); });
       state.series = series;
@@ -160,9 +182,9 @@ export function mount(root, ctx) {
       state.historyAt = Date.now();
       redrawCharts();
     } catch (e) {
-      showError(e, 'Historia: ');
+      if (seq === state.histSeq) showError(e, 'Historia: ');
     } finally {
-      state.loadingHistory = false;
+      if (seq === state.histSeq) state.loadingHistory = false;
     }
   }
 
@@ -170,6 +192,9 @@ export function mount(root, ctx) {
   function renderStatus(data, error) {
     if (!data) {
       fill(statusLine, stateBadge('error'), h('span', null, error || 'Brak danych'));
+      fill(notice, h('div', { class: 'notice notice-err' },
+        'Brak połączenia z serwerem - wyświetlane wartości mogą być nieaktualne.'));
+      content.classList.add('stale');
       return;
     }
     const st = data.status || {};
@@ -177,7 +202,8 @@ export function mount(root, ctx) {
     if (data.preset) parts.push(h('span', null, [data.preset.manufacturer, data.preset.model].filter(Boolean).join(' ') || data.preset.name));
     parts.push(h('span', null, `Unit ID ${data.device.unit}`));
     if (st.age != null) parts.push(h('span', null, `aktualizacja ${fmtAge(st.age)}`));
-    if (st.duration_ms != null) parts.push(h('span', null, `odczyt ${Math.round(st.duration_ms)} ms`));
+    if (st.duration_ms != null && st.state === 'ok') parts.push(h('span', null, `odczyt ${Math.round(st.duration_ms)} ms`));
+    if (st.state !== 'ok' && st.last_ok_ts) parts.push(h('span', null, `ostatni udany odczyt ${fmtAge(Date.now() / 1000 - st.last_ok_ts)}`));
     if (st.failures) parts.push(h('span', null, `błędy: ${st.failures}/${st.polls}`));
     fill(statusLine, parts);
     let msg = null;
@@ -271,7 +297,7 @@ export function mount(root, ctx) {
         } else {
           const card = h('div', {
             class: 'val-card', tabindex: '0', role: 'button', 'aria-label': `${it.label} - wykres`,
-            onclick: () => openDetail(it.key), onkeydown: (e) => { if (e.key === 'Enter') openDetail(it.key); },
+            onclick: () => openDetail(it.key), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it.key); } },
             style: { cursor: 'pointer' },
           },
           h('div', { class: 'acc', style: { background: color } }),
@@ -287,7 +313,7 @@ export function mount(root, ctx) {
     state.built = sig;
     update(data);
     if (state.mode === 'charts') {
-      if (Object.keys(state.series).length) redrawCharts(); else loadHistory();
+      if (state.historyAt) redrawCharts(); else loadHistory();
     }
   }
 

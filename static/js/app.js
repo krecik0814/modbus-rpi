@@ -36,6 +36,8 @@ let current = null;      // {name, instance}
 let currentHash = null;  // adres aktualnie zamontowanego widoku
 let routeSeq = 0;
 let leaving = false;
+let skipNext = false;    // hashchange wywołany cofnięciem anulowanej nawigacji
+let currentIdx = null;   // pozycja bieżącego wpisu historii (history.state.idx)
 
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '');
@@ -44,6 +46,7 @@ function parseHash() {
 }
 
 async function route(ev) {
+  if (skipNext) { skipNext = false; return; }
   if (leaving) return;
   if (current && current.instance && typeof current.instance.canLeave === 'function') {
     leaving = true;
@@ -51,9 +54,16 @@ async function route(ev) {
     try { ok = await current.instance.canLeave(); } catch (e) { console.error(e); }
     leaving = false;
     if (ok === false) {
-      const back = ev && ev.oldURL ? new URL(ev.oldURL).hash : currentHash;
-      if (back != null && location.hash !== back) history.replaceState(null, '', back || '#');
       pendingHandoff = null;
+      const t = history.state && history.state.idx;
+      if (ev && typeof t === 'number' && currentIdx != null && t !== currentIdx) {
+        // Wstecz/Dalej przeglądarki: cofamy ruch zamiast nadpisywać cudzy wpis historii
+        skipNext = true;
+        if (t < currentIdx) history.forward(); else history.back();
+        return;
+      }
+      const back = ev && ev.oldURL ? new URL(ev.oldURL).hash : currentHash;
+      if (back != null && location.hash !== back) history.replaceState({ ...(history.state || {}), idx: currentIdx }, '', back || '#');
       return;
     }
   }
@@ -77,7 +87,21 @@ async function route(ev) {
   ctx.handoff = pendingHandoff;
   pendingHandoff = null;
   try {
-    const mod = await import(`./views/${name}.js`);
+    let mod;
+    try {
+      mod = await import(`./views/${name}.js`);
+    } catch (e) {
+      // przeglądarka zapamiętuje nieudany import modułu - ponawiamy z nowym adresem
+      try {
+        mod = await import(`./views/${name}.js?r=${Date.now()}`);
+      } catch (e2) {
+        if (seq !== routeSeq) return;
+        mount(root, h('div', { class: 'page-content' }, h('div', { class: 'notice notice-err' },
+          `Nie udało się wczytać widoku "${TITLES[name]}" - brak połączenia z serwerem. `,
+          h('button', { class: 'btn btn-primary btn-sm', type: 'button', onclick: () => location.reload() }, 'Odśwież stronę'))));
+        return;
+      }
+    }
     if (seq !== routeSeq) return;
     const view = h('div', { class: 'view', 'data-view': name });
     mount(root, view);
@@ -86,6 +110,10 @@ async function route(ev) {
     if (seq !== routeSeq) { instance && instance.unmount && instance.unmount(); return; }
     current = { name, instance };
     currentHash = location.hash;
+    if (!history.state || typeof history.state.idx !== 'number') {
+      history.replaceState({ ...(history.state || {}), idx: Date.now() }, '');
+    }
+    currentIdx = history.state.idx;
   } catch (e) {
     console.error(e);
     if (seq !== routeSeq) return;
@@ -100,6 +128,8 @@ function openNav() {
   document.body.classList.add('nav-open');
   $('#nav-backdrop').hidden = false;
   $('#nav-toggle').setAttribute('aria-expanded', 'true');
+  const active = $('.nav-item.active') || $('.nav-item');
+  if (active) setTimeout(() => active.focus(), 50);
 }
 function closeNav() {
   document.body.classList.remove('nav-open');
@@ -137,6 +167,8 @@ function setHealth(cls, text) {
 async function init() {
   $('#nav-toggle').addEventListener('click', () => (document.body.classList.contains('nav-open') ? closeNav() : openNav()));
   $('#nav-backdrop').addEventListener('click', closeNav);
+  // zamknij menu także po kliknięciu bieżącego widoku (wtedy nie ma zdarzenia hashchange)
+  $('#sidebar').addEventListener('click', (e) => { if (e.target.closest('.nav-item')) closeNav(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeNav(); });
   try {
     ctx.info = await get('/api/info');

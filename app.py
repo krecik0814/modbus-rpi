@@ -20,10 +20,22 @@ BASE_DIR = Path(__file__).parent.resolve()
 log = logging.getLogger("modbus-dash")
 
 
+class _PolishDefaults(argparse.HelpFormatter):
+    """Dopisuje "(domyślnie: ...)" po polsku; pomija puste wartości i --auth (hasło z env)."""
+
+    def _get_help_string(self, action):
+        text = action.help or ""
+        default = action.default
+        if (action.dest == "auth" or default in (None, False, [], argparse.SUPPRESS)
+                or "%(default)" in text or not action.option_strings):
+            return text
+        return f"{text} (domyślnie: %(default)s)"
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         description="Modbus Dash - monitoring liczników energii (Modbus RTU/TCP)",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+        formatter_class=_PolishDefaults)
     g = p.add_argument_group("serwer WWW")
     g.add_argument("--host", default="0.0.0.0", help="adres nasłuchu HTTP (127.0.0.1 = tylko lokalnie)")
     g.add_argument("--port", type=int, default=5000, help="port HTTP dashboardu")
@@ -34,14 +46,15 @@ def parse_args(argv=None):
     g.add_argument("--presets-dir", default=str(BASE_DIR / "presets"), help="katalog presetów użytkownika")
     g.add_argument("--no-history", action="store_true", help="nie zapisuj historii w SQLite")
     g.add_argument("--debug", action="store_true", help="tryb debug Flask (tylko lokalnie!)")
-    g.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    g.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                   help="poziom komunikatów w logu")
 
-    g = p.add_argument_group("połączenie Modbus (magistrala 'default')")
+    g = p.add_argument_group("połączenie Modbus ('default')")
     g.add_argument("--serial", metavar="PORT", help="port RS-485, np. /dev/serial0, /dev/ttyUSB0, COM3")
-    g.add_argument("--baudrate", type=int, default=9600)
-    g.add_argument("--parity", default="N", choices=["N", "E", "O"])
-    g.add_argument("--stopbits", type=int, default=1, choices=[1, 2])
-    g.add_argument("--bytesize", type=int, default=8, choices=[7, 8])
+    g.add_argument("--baudrate", type=int, default=9600, help="prędkość portu szeregowego [bit/s]")
+    g.add_argument("--parity", default="N", choices=["N", "E", "O"], help="parzystość: N (brak), E (parzysta), O")
+    g.add_argument("--stopbits", type=int, default=1, choices=[1, 2], help="bity stopu")
+    g.add_argument("--bytesize", type=int, default=8, choices=[7, 8], help="bity danych")
     g.add_argument("--framer", default="rtu", choices=["rtu", "ascii"], help="ramkowanie na porcie szeregowym")
     g.add_argument("--local-echo", action="store_true",
                    help="adapter RS-485 odsyła własną transmisję (lokalne echo) - odrzucaj ją")

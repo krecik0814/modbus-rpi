@@ -4,7 +4,7 @@ Wymaga opcjonalnej biblioteki paho-mqtt (v1 lub v2): pip install paho-mqtt
 
 Topiki (prefiks domyślnie "modbus-dash"):
     <prefiks>/status                 online/offline (retained, LWT)
-    <prefiks>/<urządzenie>/state     JSON {klucz: wartość, ..., "ts": unix}
+    <prefiks>/<urządzenie>/state     JSON {klucz: wartość, ..., "ts": unix}  (<urządzenie> = id urządzenia)
     <prefiks>/<urządzenie>/availability  online/offline
     homeassistant/sensor/<prefiks>/<urządzenie>_<klucz>/config   discovery
 """
@@ -176,7 +176,7 @@ class MqttPublisher:
             online = bool(sample["ok"])
             if self._dev_online.get(device_id) != online:
                 self._dev_online[device_id] = online
-                self._pub(self._t(safe_key(device_id), "availability"),
+                self._pub(self._t(device_id, "availability"),
                           "online" if online else "offline", retain=True)
             if not online:
                 return
@@ -188,7 +188,7 @@ class MqttPublisher:
                 self._publish_discovery(device_id)
             state = {k: v for k, v in sample["values"].items() if v is not None}
             state["ts"] = round(sample["ts"], 3)
-            self._pub(self._t(safe_key(device_id), "state"), state, retain=self._cfg["retain"])
+            self._pub(self._t(device_id, "state"), state, retain=self._cfg["retain"])
 
     def _publish_discovery_all(self):
         if not (self._cfg and self._cfg["ha_discovery"] and self._connected):
@@ -227,10 +227,10 @@ class MqttPublisher:
                 "name": m.get("label") or key,
                 "unique_id": f"{node}_{obj}",
                 "object_id": f"{node}_{obj}",
-                "state_topic": self._t(dev_key, "state"),
+                "state_topic": self._t(device_id, "state"),
                 "value_template": "{{ value_json[" + json.dumps(key) + "] }}",
                 "availability": [{"topic": self._t("status")},
-                                 {"topic": self._t(dev_key, "availability")}],
+                                 {"topic": self._t(device_id, "availability")}],
                 "availability_mode": "all",
                 "device": device_info,
                 "suggested_display_precision": m.get("decimals", 2),
