@@ -15,7 +15,7 @@ from . import __version__, metrics, mqtt, scanner
 from .config import ConfigError
 from .planner import PresetReader
 from .presets import PresetError, valid_id
-from .transport import TransportConfig, list_serial_ports, pymodbus_version
+from .transport import ModbusError, TransportConfig, list_serial_ports, pymodbus_version
 
 log = logging.getLogger("modbus-dash.web")
 
@@ -115,6 +115,12 @@ def create_app(ctx):
     @app.errorhandler(ConfigError)
     def _config_error(e):
         return jsonify({"error": str(e)}), 400
+
+    @app.errorhandler(ModbusError)
+    def _modbus_error(e):
+        kind = getattr(e, "kind", "io")
+        status = {"invalid": 400, "timeout": 504}.get(kind, 502)
+        return jsonify({"error": str(e), "kind": kind, "code": getattr(e, "code", None)}), status
 
     @app.errorhandler(404)
     def _not_found(e):

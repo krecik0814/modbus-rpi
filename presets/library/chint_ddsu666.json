@@ -1,0 +1,23 @@
+{
+  "name": "Chint DDSU666",
+  "manufacturer": "Chint",
+  "model": "DDSU666 (Modbus RTU)",
+  "description": "Licznik 1-fazowy na szynę DIN, często dostarczany z falownikami (np. Growatt, Deye). Odczyt FC03 (holding), float32 big-endian; moc w kW/kvar/kVA przeliczana przez scale, moc czynna i cos φ są ze znakiem. Ustawienia fabryczne zależą od wersji (np. adres 3, 9600 bod; część egzemplarzy startuje z protokołem DL/T 645), więc sprawdź protokół, adres i prędkość na wyświetlaczu.",
+  "phases": 1,
+  "source": "Chint DDSU666 Operation Manual ZTY0.464.1224 (tabela 9): https://www.chintglobal.com/content/dam/chint/global/product-center/instruments-meters/electricity-meter/din-rail-meter/ddsu666-ct/manual/DDSU666%20Single%20phase%20Smart%20Meter.pdf; Chint DDSU666 User manual ZTY0.464.1413: https://chint.it/wp-content/uploads/product-docs/iStoragE/Manuali/iStoragE%20Meter%20DDSU666%20User%20Manual%20EN.pdf; ESPHome (FP32, holding, moc pozorna 0x2008 w kVA): https://github.com/gianfrdp/esphome_yaml/blob/main/dds666.yaml; Home Assistant: https://github.com/helixzz/ha-modbus-powermeter/blob/main/custom_components/ddsu666/const.py; zrzut ruchu Growatt-DDSU666: https://github.com/gjtimms/Modbus-RTU-Listen",
+  "register_type": "holding",
+  "byte_order": "ABCD",
+  "data_type": "float32",
+  "probe": "voltage_l1",
+  "registers": {
+    "voltage_l1":     {"address": 8192, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":     {"address": 8194, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "power_l1":       {"address": 8196, "scale": 1000, "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "reactive_l1":    {"address": 8198, "scale": 1000, "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
+    "apparent_l1":    {"address": 8200, "scale": 1000, "label": "Moc pozorna L1", "unit": "VA", "group": "power", "decimals": 0},
+    "pf_l1":          {"address": 8202, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "frequency":      {"address": 8206, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
+    "energy_import":  {"address": 16384, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export":  {"address": 16394, "label": "Energia oddana", "unit": "kWh", "group": "energy", "decimals": 2}
+  }
+}

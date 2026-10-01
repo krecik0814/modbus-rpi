@@ -16,7 +16,7 @@
     "apparent_l1":            {"address": 18, "label": "Moc pozorna L1", "unit": "VA", "group": "power", "decimals": 0},
     "reactive_l1":            {"address": 24, "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
     "pf_l1":                  {"address": 30, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
-    "phase_angle_l1":         {"address": 36, "label": "Kąt fazowy L1", "unit": "°", "group": "system", "decimals": 1},
+    "phase_angle_total":      {"address": 36, "label": "Kąt fazowy Σ", "unit": "°", "group": "system", "decimals": 1},
     "frequency":              {"address": 70, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
     "energy_import":          {"address": 72, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
     "energy_export":          {"address": 74, "label": "Energia oddana", "unit": "kWh", "group": "energy", "decimals": 2},

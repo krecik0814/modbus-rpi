@@ -1,0 +1,29 @@
+{
+  "name": "Eltako WSZ16",
+  "manufacturer": "Eltako",
+  "model": "WSZ16D / WSZ16DZ (także wersje bez MID z literą E)",
+  "description": "Liczniki 1-fazowe MID serii WSZ16 z Modbus RTU (WSZ16DZ dwukierunkowy). Rejestry input FC04 w formacie danych integer (rejestr holding 0x001E = 0): 32-bit big-endian, wartości z rozdzielczością 0,01, moce w W i cos φ (0,001) ze znakiem. Energia oddana tylko w WSZ16DZ, a rejestry T1/T2 mają znaczenie tylko przy używaniu taryf.",
+  "phases": 1,
+  "source": "Eltako Modbus-RTU protocol specification V3.7.3 (DSZ15DZMOD/DSZ16/WSZ16; typy danych, ustawienia portu): https://nettbutikk.mwg.no/media/multicase/documents/dsz16_eltako_modbus-rtu_specification_v3.7.3.pdf",
+  "register_type": "input",
+  "byte_order": "ABCD",
+  "data_type": "uint32",
+  "serial": {"baudrate": 9600, "parity": "N", "stopbits": 1},
+  "probe": "voltage_l1",
+  "registers": {
+    "voltage_l1":             {"address": 0, "scale": 0.01, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":             {"address": 6, "scale": 0.01, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "power_l1":               {"address": 12, "type": "int32", "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "apparent_l1":            {"address": 18, "type": "int32", "label": "Moc pozorna L1", "unit": "VA", "group": "power", "decimals": 0},
+    "reactive_l1":            {"address": 24, "type": "int32", "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
+    "pf_l1":                  {"address": 30, "type": "int32", "scale": 0.001, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "energy_import":          {"address": 72, "scale": 0.01, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export":          {"address": 74, "scale": 0.01, "label": "Energia oddana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_reactive_import": {"address": 82, "scale": 0.01, "label": "Energia bierna pobrana", "unit": "kvarh", "group": "energy", "decimals": 2},
+    "energy_reactive_export": {"address": 84, "scale": 0.01, "label": "Energia bierna oddana", "unit": "kvarh", "group": "energy", "decimals": 2},
+    "energy_import_t1":       {"address": 100, "scale": 0.01, "label": "Energia pobrana T1", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export_t1":       {"address": 104, "scale": 0.01, "label": "Energia oddana T1", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_import_t2":       {"address": 108, "scale": 0.01, "label": "Energia pobrana T2", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export_t2":       {"address": 112, "scale": 0.01, "label": "Energia oddana T2", "unit": "kWh", "group": "energy", "decimals": 2}
+  }
+}

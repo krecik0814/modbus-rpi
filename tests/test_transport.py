@@ -1,5 +1,6 @@
 """Testy transportu: prawdziwe klienty pymodbus przeciw własnemu symulatorowi (TCP, RTU over TCP, UDP, pty)."""
 
+import inspect
 import logging
 import os
 import select
@@ -121,7 +122,6 @@ def test_exception_mapping():
 def test_pymodbus_api_detected():
     info = T.pymodbus_info()
     assert info["version"] == T.pymodbus_version()
-    import inspect
     from pymodbus.client import ModbusTcpClient
     assert info["unit_kw"] in inspect.signature(ModbusTcpClient.read_holding_registers).parameters
     assert info["client_retries"] in (0, 1)
@@ -317,6 +317,30 @@ def test_override_is_thread_local(server):
     bus.close()
 
 
+def test_close_interrupts_request_in_flight(server, monkeypatch):
+    monkeypatch.setattr(T, "CLOSE_WAIT", 0.2)
+    bus = tcp_bus(server, timeout=5.0, retries=2)
+    bus.read_registers(1, "input", 0, 2)
+    res = {}
+
+    def silent():
+        t0 = time.monotonic()
+        try:
+            bus.read_registers(9, "input", 0, 2)
+        except ModbusError as e:
+            res["err"] = e
+        res["dt"] = time.monotonic() - t0
+
+    th = threading.Thread(target=silent)
+    th.start()
+    time.sleep(0.2)
+    bus.close()  # nie czeka 5 s na odpowiedź, przerywa zapytanie
+    th.join(5)
+    assert res["err"].kind == "connection" and res["dt"] < 1.5, res
+    assert bus.read_registers(1, "input", 0, 2) == EXPECTED[:2]  # kolejne zapytanie łączy się od nowa
+    bus.close()
+
+
 def test_ping(server):
     bus = tcp_bus(server, timeout=0.3, retries=0)
     try:
@@ -463,7 +487,7 @@ def test_bus_manager_closes_idle(server, monkeypatch):
 
 
 # ── port szeregowy (pty) ──────────────────────────────────────
-pytestmark_serial = pytest.mark.skipif(
+linux_pty = pytest.mark.skipif(
     not sys.platform.startswith("linux") or not hasattr(os, "openpty"), reason="pty tylko w Linuksie")
 
 
@@ -481,7 +505,7 @@ def serial_bus(path, **kw):
                                **kw))
 
 
-@pytestmark_serial
+@linux_pty
 def test_serial_rtu(pty_pair):
     master, path = pty_pair
     srv = S.SerialSimServer(master)
@@ -503,13 +527,14 @@ def test_serial_rtu(pty_pair):
         dt = time.monotonic() - t0
         assert e.value.kind == "timeout" and dt < 0.3 * 2 * 2 + 0.3, dt
         assert bus.read_registers(1, "input", 2, 6) == EXPECTED[2:]
-        assert bus.stats()["connects"] == 1 or T.pymodbus_info()["client_retries"] == 1  # 3.6/3.7 zamykają port
+        legacy = T.pymodbus_info()["client_retries"] == 1  # 3.6/3.7 same zamykają port po timeoucie
+        assert bus.stats()["connects"] == 1 or legacy  # port zostaje otwarty mimo błędów
     finally:
         bus.close()
         srv.stop()
 
 
-@pytestmark_serial
+@linux_pty
 def test_serial_late_response_is_flushed(pty_pair):
     master, path = pty_pair
     srv = S.SerialSimServer(master)
@@ -517,7 +542,7 @@ def test_serial_late_response_is_flushed(pty_pair):
     srv.start()
     bus = serial_bus(path, timeout=0.2, retries=1)
     try:
-        srv.response_delay = 0.35
+        srv.response_delay = 0.5  # dłużej niż timeout (3.6/3.7 czekają timeout + czas ramki)
         with bus.override(retries=0), pytest.raises(ModbusError) as e:
             bus.read_registers(1, "input", 0, 8)
         assert e.value.kind == "timeout"
@@ -552,13 +577,18 @@ def _ascii_slave(fd, devices, stop):
                 os.write(fd, b":" + (body + bytes([(-sum(body)) & 0xFF])).hex().upper().encode() + b"\r\n")
 
 
-@pytestmark_serial
+def _start_ascii(master, devices):
+    stop = threading.Event()
+    th = threading.Thread(target=_ascii_slave, args=(master, devices, stop), daemon=True)
+    th.start()
+    return stop, th
+
+
+@linux_pty
 def test_serial_ascii(pty_pair):
     master, path = pty_pair
-    stop = threading.Event()
-    th = threading.Thread(target=_ascii_slave, args=(master, {3: make_device(3)}, stop), daemon=True)
-    th.start()
-    bus = serial_bus(path, kind="ascii", bytesize=7, parity="E", timeout=0.3, retries=0)
+    stop, th = _start_ascii(master, {3: make_device(3)})
+    bus = serial_bus(path, kind="ascii", timeout=0.3, retries=0)
     try:
         assert bus.read_registers(3, "input", 0, 8) == EXPECTED
         bus.write_registers(3, 0, [11, 12, 13])
@@ -573,7 +603,22 @@ def test_serial_ascii(pty_pair):
         th.join(2)
 
 
-@pytestmark_serial
+@linux_pty
+def test_serial_ascii_7e1(pty_pair):
+    # pty w Linuksie nie pozwala ponownie otworzyć portu z ustawieniami innymi niż 8N1 - bez timeoutów
+    master, path = pty_pair
+    stop, th = _start_ascii(master, {1: make_device(1)})
+    bus = serial_bus(path, kind="ascii", bytesize=7, parity="E", baudrate=9600, timeout=0.5)
+    try:
+        assert bus.read_registers(1, "input", 0, 8) == EXPECTED
+        assert bus.read_registers(1, "input", 0, 125)[100:102] == codec.encode(4321.5)
+    finally:
+        bus.close()
+        stop.set()
+        th.join(2)
+
+
+@linux_pty
 def test_serial_port_errors(tmp_path):
     pytest.importorskip("serial")
     bus = serial_bus("/dev/ttyNOPE0", timeout=0.2)
@@ -596,6 +641,6 @@ def test_serial_port_errors(tmp_path):
         os.close(master)
 
 
-def test_unused_logging_is_quiet():
+def test_pymodbus_logger_is_quiet():
     T._pm()
     assert logging.getLogger("pymodbus").getEffectiveLevel() >= logging.WARNING

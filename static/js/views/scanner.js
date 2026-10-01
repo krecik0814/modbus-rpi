@@ -181,7 +181,7 @@ export function mount(root, ctx) {
   });
   const stepLabelId = 'sc-step-' + Math.random().toString(36).slice(2);
   stepSeg.el.setAttribute('aria-labelledby', stepLabelId);
-  const stepField = h('div', { class: 'field' }, h('span', { class: 'label', id: stepLabelId }, 'Krok'), stepSeg.el,
+  const stepField = h('div', { class: 'field sc-step' }, h('span', { class: 'label', id: stepLabelId }, 'Krok'), stepSeg.el,
     h('span', { class: 'hint' }, 'co 1 - wartości 32-bit pod nieparzystymi adresami'));
   const formErrors = h('ul', { class: 'errors', role: 'alert' });
   const busNotice = h('div');
@@ -191,12 +191,12 @@ export function mount(root, ctx) {
   const csvBtn = h('button', { type: 'button', class: 'btn btn-ghost', disabled: true, onclick: exportCsv }, 'Eksport CSV');
   const presetBtn = h('button', { type: 'button', class: 'btn btn-success', disabled: true, onclick: createPreset }, 'Utwórz preset');
 
-  const paramsFs = h('fieldset', { class: 'form-grid sc-form' },
-    field('Magistrala', busSel),
-    field('Unit ID', unitIn, '0-255, zwykle 1-247'),
-    field('Funkcja', funcSel),
+  const paramsFs = h('fieldset', { class: 'sc-params' },
+    field('Magistrala', busSel, null, { class: 'field sc-wide' }),
+    field('Unit ID', unitIn, 'zwykle 1-247', { class: 'field sc-narrow' }),
+    field('Funkcja', funcSel, null, { class: 'field sc-wide' }),
     field('Od adresu', startIn, startNote),
-    field('Do adresu (wyłącznie)', endIn, endNote),
+    field('Do adresu', endIn, endNote),
     stepField);
   const paramsForm = h('form', { novalidate: true, onsubmit: (e) => { e.preventDefault(); manualScan(); } },
     paramsFs, formErrors,
@@ -215,8 +215,8 @@ export function mount(root, ctx) {
   const regControls = h('div', { class: 'sc-controls' },
     h('span', { class: 'label' }, 'Widok'), viewSeg.el,
     h('label', { class: 'sc-check' }, onlyChk, 'Tylko rozpoznane'));
-  const resultsMeta = h('span', { class: 'small muted' });
-  const liveLine = h('div', { class: 'status-line', role: 'status', hidden: true });
+  const resultsMeta = h('div', { class: 'small muted' });
+  const liveLine = h('div', { class: 'status-line', hidden: true });
   const summary = h('div', { 'aria-live': 'polite' });
   const resultsBody = h('div', null, emptyState('Ustaw parametry i kliknij „Skanuj”. Na symulatorze spróbuj: magistrala sim, Unit ID 1, Input Registers, adresy 0-80.'));
   resultsBody.addEventListener('animationend', (e) => {
@@ -308,7 +308,7 @@ export function mount(root, ctx) {
       const span = e.address - s.address;
       if (span <= 0) { endText = 'musi być większy niż adres początkowy'; endBad = true; }
       else if (span > MAX_SPAN) { endText = `${span} adresów - maksymalnie ${MAX_SPAN}`; endBad = true; }
-      else endText = `${e.note} · ${span} ${plural(span, 'adres', 'adresy', 'adresów')} (${fmtHex(s.address)}-${fmtHex(e.address - 1)})`;
+      else endText = `${e.note} (wyłącznie) · ${span} ${plural(span, 'adres', 'adresy', 'adresów')}: ${fmtHex(s.address)}-${fmtHex(e.address - 1)}`;
     }
     endNote.textContent = endText;
     markInvalid(endIn, endBad);
@@ -497,14 +497,14 @@ export function mount(root, ctx) {
       liveLine.hidden = false;
       liveLine.replaceChildren(h('span', { class: 'live-dot', 'aria-hidden': 'true' }),
         h('b', null, 'Live'),
-        `odczyt #${live.count}`,
-        `w logu ${liveLog.length}/${LOG_MAX_SCANS} ${plural(liveLog.length, 'skan', 'skany', 'skanów')}`,
-        live.ms != null ? `${fmt(live.ms, 0)} ms` : 'pierwszy odczyt...');
+        h('span', null, `odczyt #${live.count}`),
+        h('span', null, `w logu ${liveLog.length}/${LOG_MAX_SCANS} ${plural(liveLog.length, 'skan', 'skany', 'skanów')}`),
+        h('span', null, live.ms != null ? `ostatni skan ${fmt(live.ms, 0)} ms` : 'pierwszy odczyt...'));
     } else if (stopped && stopped.count) {
       liveLine.hidden = false;
       liveLine.replaceChildren(h('span', { class: 'badge badge-muted' }, 'Live zatrzymany'),
-        `${stopped.count} ${plural(stopped.count, 'odczyt', 'odczyty', 'odczytów')}`,
-        liveLog.length ? `Eksport CSV zapisze ${liveLog.length} ${plural(liveLog.length, 'skan', 'skany', 'skanów')} z logu` : '');
+        h('span', null, `${stopped.count} ${plural(stopped.count, 'odczyt', 'odczyty', 'odczytów')}`),
+        liveLog.length ? h('span', null, `Eksport CSV zapisze ${liveLog.length} ${plural(liveLog.length, 'skan', 'skany', 'skanów')} z logu`) : null);
     } else {
       liveLine.hidden = true;
       liveLine.replaceChildren();
@@ -522,9 +522,10 @@ export function mount(root, ctx) {
         liveChars -= liveLog.shift().text.length;
       }
     }
+    summary.setAttribute('aria-live', fromLive ? 'off' : 'polite'); // Live nie zasypuje czytnika ekranu
     renderSummary(req, res);
     renderResults(req, res);
-    resultsMeta.textContent = ` · ${busLabelFor(req.bus)} · Unit ID ${req.unit} · ${FUNCTIONS[req.register_type]} · ${fmtHex(req.start)}-${fmtHex(req.end - 1)}${isBits(req.register_type) ? '' : req.step === 2 ? ' · pary' : ' · co 1'} · ${fmtTime(ts / 1000)}`;
+    resultsMeta.textContent = `${busLabelFor(req.bus)} · Unit ID ${req.unit} · ${FUNCTIONS[req.register_type]} · ${fmtHex(req.start)}-${fmtHex(req.end - 1)}${isBits(req.register_type) ? '' : req.step === 2 ? ' · pary' : ' · co 1'} · ${fmtTime(ts / 1000)}`;
     if (live) renderLiveLine();
     sync();
   }
@@ -539,8 +540,8 @@ export function mount(root, ctx) {
     const items = [
       h('span', { class: 'badge ' + (res.readable === total ? 'badge-ok' : 'badge-warn') },
         `Odczytano ${res.readable}/${total}`),
-      `Zapytań: ${res.requests}`,
-      `Czas: ${fmt(res.duration_ms, 0)} ms`,
+      h('span', null, `Zapytań: ${res.requests}`),
+      h('span', null, `Czas: ${fmt(res.duration_ms, 0)} ms`),
     ];
     if (res.registers) {
       const n = res.registers.filter((r) => r.hint).length;
@@ -568,6 +569,7 @@ export function mount(root, ctx) {
     const ur = e.data && Array.isArray(e.data.unreadable) ? e.data.unreadable : [];
     if (ur.length) out.push(unreadableLine(ur));
     if (last) out.push(h('p', { class: 'small muted' }, 'Poniżej wyniki poprzedniego udanego skanu.'));
+    summary.setAttribute('aria-live', 'polite');
     summary.replaceChildren(...out);
   }
 
@@ -696,10 +698,12 @@ export function mount(root, ctx) {
   }
 
   // ── CSV ─────────────────────────────────────────────────────
-  function csvNum(v) {
+  /** Liczba do CSV: przecinek dziesiętny (jak eksport historii); float32 tak jak w tabeli (6 cyfr, wykładnik). */
+  function csvNum(v, float = false) {
     if (v == null) return '';
-    if (typeof v === 'number') return Number.isFinite(v) ? dec(String(v)) : '';
-    return csvCell(v);
+    if (typeof v !== 'number') return csvCell(v);
+    if (!Number.isFinite(v)) return '';
+    return float ? fmtNum(v) : String(v);
   }
 
   function hintText(hint) {
@@ -717,7 +721,7 @@ export function mount(root, ctx) {
     return (res.registers || []).map((r) => {
       const d = r.decoded || {};
       return [t, r.address, csvCell(r.address_hex || fmtHex(r.address)), csvCell(r.raw_hex), csvNum(r.u16), csvNum(r.i16),
-        ...ORDERS.map((o) => csvNum(d.float32 && d.float32[o])),
+        ...ORDERS.map((o) => csvNum(d.float32 && d.float32[o], true)),
         csvNum(d.int32 && d.int32.ABCD), csvNum(d.int32 && d.int32.CDAB),
         csvNum(d.uint32 && d.uint32.ABCD), csvNum(d.uint32 && d.uint32.CDAB),
         csvCell(hintText(r.hint))].join(';');
@@ -762,7 +766,7 @@ export function mount(root, ctx) {
     const m = modal({
       title: 'Utwórz preset ze skanu',
       subtitle: `${rows.length} ${plural(rows.length, 'rozpoznany rejestr', 'rozpoznane rejestry', 'rozpoznanych rejestrów')}. Szkic otworzy się w edytorze presetów - nic nie zostanie zapisane bez Twojej zgody.`,
-      body: [h('div', { class: 'form-grid' },
+      body: [h('div', { class: 'grid' },
         field('Kolejność bajtów', orderSel, 'domyślnie najczęstsza wśród podpowiedzi'),
         field('Nazwa (opcjonalnie)', nameIn)), errBox],
       actions: [{ label: 'Anuluj' }, { label: 'Utwórz szkic', class: 'btn-primary', onClick: (close) => submit(close) }],
@@ -829,6 +833,7 @@ export function mount(root, ctx) {
     let lastJob = null;
     usStatus.hidden = false;
     usList.replaceChildren();
+    delete usList.dataset.sig;
     setUnitProgress(0, lastU - first + 1, 'Uruchamianie...');
     sync();
     try {
@@ -844,8 +849,8 @@ export function mount(root, ctx) {
       if (job.state === 'cancelled') {
         usMsg.textContent = 'Anulowano.';
       } else {
+        setUnitProgress(1, 1, '');
         usMsg.textContent = `Gotowe: ${found.length} ${plural(found.length, 'urządzenie', 'urządzenia', 'urządzeń')} (Unit ID ${first}-${lastU}).`;
-        setUnitProgress(1, 1, usMsg.textContent);
         toast(`Znaleziono ${found.length} ${plural(found.length, 'urządzenie', 'urządzenia', 'urządzeń')}`, found.length ? 'ok' : 'info');
       }
     } catch (e) {
@@ -873,6 +878,10 @@ export function mount(root, ctx) {
   }
 
   function renderUnits(found, body, final) {
+    // w trakcie wyszukiwania przebudowa tylko przy nowym wyniku (nie gubi kliknięć w przyciski)
+    const sig = `${found.length}|${final}`;
+    if (usList.dataset.sig === sig) return;
+    usList.dataset.sig = sig;
     if (!found.length) {
       usList.replaceChildren(final ? h('p', { class: 'muted small sc-gap' }, 'Nie znaleziono urządzeń. Sprawdź parametry magistrali (prędkość, parzystość), okablowanie A/B i zwiększ timeout.') : '');
       return;
@@ -911,7 +920,7 @@ export function mount(root, ctx) {
     const wVals = h('input', { type: 'text', value: prefs.wr.values, autocomplete: 'off', spellcheck: false, placeholder: 'np. 1234 albo 1, 2, 0x10' });
     const wValsNote = h('span', { 'aria-live': 'polite' });
     const wCoil = select([['1', '1 - włącz (ON)'], ['0', '0 - wyłącz (OFF)']], prefs.wr.coil);
-    const valsField = field('Wartość (kilka po przecinku = FC16)', wVals, wValsNote);
+    const valsField = field('Wartość', wVals, wValsNote);
     const coilField = field('Stan cewki', wCoil);
     const wErrors = h('ul', { class: 'errors', role: 'alert' });
     const wResult = h('div', { 'aria-live': 'polite' });
@@ -927,8 +936,8 @@ export function mount(root, ctx) {
       markInvalid(wAddr, !!a.error && wAddr.value.trim() !== '');
       if (!isCoil) {
         const v = parseWriteValues(wVals.value);
-        wValsNote.textContent = v.error ? (wVals.value.trim() ? v.error : 'liczby 0-65535, hex 0x.., ujemne jako int16')
-          : `${v.values.length} ${plural(v.values.length, 'rejestr', 'rejestry', 'rejestrów')}: ${v.values.slice(0, 8).map((x) => fmtHex(x)).join(' ')}${v.values.length > 8 ? ' ...' : ''}`;
+        wValsNote.textContent = v.error ? (wVals.value.trim() ? v.error : 'jedna = FC06, kilka po przecinku = FC16; 0-65535, hex 0x.., ujemne jako int16')
+          : `${v.values.length > 1 ? 'FC16' : 'FC06'} · ${v.values.length} ${plural(v.values.length, 'rejestr', 'rejestry', 'rejestrów')}: ${v.values.slice(0, 8).map((x) => fmtHex(x)).join(' ')}${v.values.length > 8 ? ' ...' : ''}`;
         markInvalid(wVals, !!v.error && wVals.value.trim() !== '');
       }
     };

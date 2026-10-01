@@ -276,10 +276,15 @@ export function mount(root, ctx) {
         h('dt', null, 'Odczyty'), h('dd', null, `${st.polls ?? 0}`,
           h('span', { class: st.failures ? 'err-text' : 'muted' }, ` / błędy: ${st.failures ?? 0}`))));
 
+    const nm = d.name || d.id;
+    const editLbl = d.locked ? 'Szczegóły' : 'Edytuj';
     c.btns.toggle.querySelector('.lbl').textContent = d.enabled ? 'Wyłącz' : 'Włącz';
-    c.btns.toggle.setAttribute('aria-label', `${d.enabled ? 'Wyłącz' : 'Włącz'} ${d.name || d.id}`);
-    c.btns.edit.querySelector('.lbl').textContent = d.locked ? 'Szczegóły' : 'Edytuj';
-    c.btns.remove.setAttribute('aria-label', `Usuń ${d.name || d.id}`);
+    c.btns.toggle.setAttribute('aria-label', `${d.enabled ? 'Wyłącz' : 'Włącz'} ${nm}`);
+    c.btns.edit.querySelector('.lbl').textContent = editLbl;
+    c.btns.edit.setAttribute('aria-label', `${editLbl} ${nm}`);
+    c.btns.read.setAttribute('aria-label', `Odczytaj teraz ${nm}`);
+    c.btns.dash.setAttribute('aria-label', `Pokaż na dashboardzie: ${nm}`);
+    c.btns.remove.setAttribute('aria-label', `Usuń ${nm}`);
     for (const b of [c.btns.toggle, c.btns.remove]) {
       if (!b.dataset.busy) b.disabled = !!d.locked;
     }
@@ -372,7 +377,8 @@ export function mount(root, ctx) {
     const locked = !!(dev && dev.locked);
     const d = dev || {
       name: prefill.name || '',
-      bus: prefill.bus || (state.buses.find((b) => b.id !== 'default') || state.buses[0] || { id: 'default' }).id,
+      bus: prefill.bus || (state.buses.find((b) => b.id !== 'default' && !b.locked)
+        || state.buses.find((b) => b.id !== 'default') || state.buses[0] || { id: 'default' }).id,
       unit: prefill.unit != null && prefill.unit !== '' ? prefill.unit : 1,
       preset: prefill.preset || '',
       interval: 1,
@@ -460,7 +466,11 @@ export function mount(root, ctx) {
     }
     nameIn.addEventListener('input', suggestId);
     idIn.addEventListener('input', () => { idTouched = !!idIn.value; fieldError(idIn, null); });
-    busSel.addEventListener('change', () => { updateHints(); if (unitIn.getAttribute('aria-invalid')) validate(); });
+    busSel.addEventListener('change', () => {
+      updateHints();
+      fieldError(busSel, null);
+      if (unitIn.getAttribute('aria-invalid')) fieldError(unitIn, unitMsg());
+    });
     presetSel.addEventListener('change', () => { updateHints(); fieldError(presetSel, null); });
     unitIn.addEventListener('input', () => fieldError(unitIn, null));
     intervalIn.addEventListener('input', () => fieldError(intervalIn, null));
@@ -473,15 +483,19 @@ export function mount(root, ctx) {
       if (!/^\d+$/.test(s)) return null;
       return parseInt(s, 10);
     }
+    function unitMsg() {
+      const unit = parseUnit();
+      if (unit == null || unit > 255) return 'Unit ID to liczba całkowita 0-255';
+      if (isSerial() && (unit < 1 || unit > 247)) return 'Na RS-485 Unit ID musi być w zakresie 1-247';
+      return null;
+    }
     function validate({ onlyBus = false } = {}) {
       const errs = [];
       const set = (el, msg) => { fieldError(el, msg); if (msg) errs.push(el); };
       const unit = parseUnit();
       if (!busSel.value || !curBus()) set(busSel, 'Wybierz połączenie (albo dodaj je w zakładce Połączenia)');
       else set(busSel, null);
-      if (unit == null || unit > 255) set(unitIn, 'Unit ID to liczba całkowita 0-255');
-      else if (isSerial() && (unit < 1 || unit > 247)) set(unitIn, 'Na RS-485 Unit ID musi być w zakresie 1-247');
-      else set(unitIn, null);
+      set(unitIn, unitMsg());
       if (onlyBus) {
         if (errs.length) { errs[0].focus(); return null; }
         return { bus: busSel.value, unit };
@@ -622,7 +636,7 @@ export function mount(root, ctx) {
           'aria-label': `Użyj presetu ${c.name}`, onclick: () => useCandidate(c, useBtn) }, 'Użyj');
         return h('li', { class: 'cand' },
           h('div', { class: 'cand-head' },
-            h('div', null, h('strong', null, c.name), mm ? h('span', { class: 'muted small' }, ` ${mm}`),
+            h('div', null, h('strong', null, c.name), mm ? h('span', { class: 'muted small' }, ` ${mm}`) : null,
               h('span', { class: 'badge badge-muted plain cand-src' }, c.builtin ? 'Biblioteka' : 'Mój')),
             useBtn),
           h('div', { class: 'cand-score' },
@@ -632,7 +646,7 @@ export function mount(root, ctx) {
           vals.length ? h('div', { class: 'cand-vals small' }, vals) : null);
       });
       fill(detectBox,
-        h('div', { class: 'small muted' }, `Najlepiej pasujące presety dla Unit ID ${v.unit} (${good.length} z ${cands.length} z wiarygodnymi wartościami):`),
+        h('div', { class: 'small muted' }, `Dopasowanie presetów do Unit ID ${v.unit} - najlepsze ${top.length} z ${cands.length} sprawdzonych. Wybierz właściwy przyciskiem "Użyj":`),
         h('ol', { class: 'cand-list' }, items));
     }
 
@@ -700,6 +714,13 @@ export function mount(root, ctx) {
     });
     form = { m, close: () => m.close() };
     if (locked) cancelBtn.focus();
+    // świeże listy połączeń i presetów (mogły się zmienić w innym widoku lub karcie)
+    Promise.all([loadBuses(), loadPresets()]).then(() => {
+      if (destroyed || !form || form.m !== m) return;
+      fillBusSelect(busSel.value || d.bus);
+      fillPresetSelect(presetSel.value);
+      updateHints();
+    });
   }
 
   // ── start ─────────────────────────────────────────────────

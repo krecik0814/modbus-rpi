@@ -2,7 +2,7 @@
   "name": "DDM18SD",
   "manufacturer": "OEM (różne marki)",
   "model": "DDM18SD (RS485 Modbus RTU)",
-  "description": "Tani licznik 1-fazowy na szynę DIN z RS485, sprzedawany pod różnymi markami. Rejestry tylko do odczytu FC04, wartości float32 big-endian. Licznik energii pod adresem 256 mbmd opisuje jako energię całkowitą (biblioteka reaper7/SDM jako pobraną), podobnie licznik energii biernej pod adresem 1024.",
+  "description": "Licznik 1-fazowy na szynę DIN z RS485; producent nieustalony, spotykany pod różnymi markami. Rejestry tylko do odczytu FC04, wartości float32 big-endian. Licznik energii pod adresem 256 mbmd opisuje jako energię całkowitą (biblioteka reaper7/SDM jako pobraną), podobnie licznik energii biernej pod adresem 1024.",
   "phases": 1,
   "source": "mbmd meters/rs485/ddm18sd.go (github.com/volkszaehler/mbmd); adresy zgodne z SDM.h z github.com/reaper7/SDM_Energy_Meter",
   "register_type": "input",

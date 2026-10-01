@@ -2,7 +2,7 @@
   "name": "Lovato DMG610",
   "manufacturer": "Lovato Electric",
   "model": "DMG610 (wspólna mapa serii DMG6..: DMG615, DMG611R, DMG620)",
-  "description": "Wielofunkcyjny miernik 3-fazowy z RS485; liczby całkowite big-endian (uint32/int32, energie uint64) z mnożnikami (V, W, var, VA, % i kWh x100, A x10000, Hz x1000, cos φ x10000). Adresy są już pomniejszone o 1 względem tabel producenta. THD, energie na fazę i energię oddaną trzeba włączyć w menu P02 (fabrycznie wyłączone).",
+  "description": "Wielofunkcyjny miernik 3-fazowy z RS485 (DMG620: Ethernet); liczby całkowite big-endian (uint32/int32, energie uint64) z mnożnikami (V, W, var, VA, % i kWh x100, A x10000, Hz x1000, cos φ x10000), adresy już pomniejszone o 1 względem tabel producenta. THD, energie na fazę i energię oddaną trzeba włączyć w menu P02 (fabrycznie wyłączone). Gdy przekładniki CT/VT dają moc teoretyczną fazy powyżej 5 MW, licznik podaje moce (W, var, VA) co 0,1 W - wtedy dla mocy ustaw scale 0.1.",
   "phases": 3,
   "source": "mbmd meters/rs485/dmg610.go (github.com/volkszaehler/mbmd); Lovato DMG series Modbus protocol I317IGB02_22: https://catalogue.lovatoelectric.com/gl_en/Product/GetDocument?doc=Technical%5CTechInstructions%5C28.%20CONTATORI%20DI%20ENERGIA%20E%20ANALIZZATORI%20DI%20RETE%5CI317IGB02_22.pdf; Lovato DMG600-DMG620 instructions I411IGB03_26 (ustawienia portu P07): https://catalogue.lovatoelectric.com/gl_en/Product/GetDocument?doc=Technical%5CTechInstructions%5C28.%20CONTATORI%20DI%20ENERGIA%20E%20ANALIZZATORI%20DI%20RETE%5CI411IGB03_26.pdf",
   "register_type": "input",

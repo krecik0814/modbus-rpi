@@ -129,6 +129,8 @@ def scan_units(job, bus, first, last, function, address, count, timeout):
                 if kind == "exception":
                     # odpowiedź wyjątkiem też oznacza, że urządzenie istnieje
                     entry.update(ok=True, exception=str(e))
+                elif kind == "connection" and getattr(e, "code", None) == 0x0A:
+                    entry = None  # bramka: brak ścieżki do tego Unit ID - szukamy dalej
                 elif kind == "connection":
                     job.fail(str(e))
                     return

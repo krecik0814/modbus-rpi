@@ -4,7 +4,7 @@
   "model": "SENTRON PAC2200 (7KM2200, RS485 lub Ethernet)",
   "description": "Miernik parametrów sieci 3-fazowej z Modbus RTU (RS485) lub Modbus TCP. Pomiary float32 big-endian czytane FC04 (działa też FC03); energie float64 w Wh/varh przeliczane na kWh/kvarh to liczniki taryfy 1, które obejmują całą energię, dopóki nie jest używane przełączanie taryf. Fabryczny adres Modbus RTU to 126.",
   "phases": 3,
-  "source": "mbmd meters/rs485/pac2200.go (github.com/volkszaehler/mbmd); Siemens SENTRON PAC2200 Equipment Manual 12/2022 (L1V30415167B-06): https://cache.industry.siemens.com/dl/files/835/109746835/att_1123515/v2/MAN_L1V30415167B-06_en_en-US.pdf",
+  "source": "mbmd meters/rs485/pac2200.go (github.com/volkszaehler/mbmd); Siemens SENTRON PAC2200 Equipment Manual 12/2022 (L1V30415167B-06; tabela A-3: rejestry dodatkowe oraz częstotliwość pod offsetem 55 zamiast 46 z mbmd; ustawienia portu i adres fabryczny w rozdz. 6.3): https://cache.industry.siemens.com/dl/files/835/109746835/att_1123515/v2/MAN_L1V30415167B-06_en_en-US.pdf",
   "register_type": "input",
   "byte_order": "ABCD",
   "data_type": "float32",

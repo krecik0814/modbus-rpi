@@ -239,3 +239,11 @@ def test_unknown_api_route_is_json(env):
     ctx, c, _ = env
     r = c.get("/api/nie-ma")
     assert r.status_code == 404 and r.get_json()["error"]
+
+
+def test_modbus_errors_are_json(env):
+    ctx, c, _ = env
+    r = post(c, "/api/scan", {"bus": "sim", "unit": 99, "start": 0, "end": 10})
+    assert r.status_code in (502, 504) and r.get_json()["error"]
+    r = post(c, "/api/live", {"bus": "sim", "unit": 99, "preset": "simulator_3f"})
+    assert r.status_code == 502 and "timeout" in r.get_json()["error"].lower() or "odpowiedzi" in r.get_json()["error"]

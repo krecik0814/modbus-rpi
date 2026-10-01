@@ -16,6 +16,7 @@
     "reactive_l1":            {"address": 2544, "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
     "apparent_l1":            {"address": 2552, "label": "Moc pozorna L1", "unit": "VA", "group": "power", "decimals": 0},
     "pf_l1":                  {"address": 2560, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "phase_angle_l1":         {"address": 2570, "label": "Kąt fazowy L1", "unit": "°", "group": "system", "decimals": 1},
     "phase_angle_total":      {"address": 2576, "label": "Kąt fazowy Σ", "unit": "°", "group": "system", "decimals": 1},
     "frequency":              {"address": 2584, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
     "thd_i_l1":               {"address": 2588, "label": "THD I L1", "unit": "%", "group": "thd", "decimals": 1},

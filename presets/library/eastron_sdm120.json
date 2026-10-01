@@ -2,7 +2,7 @@
   "name": "Eastron SDM120",
   "manufacturer": "Eastron",
   "model": "SDM120-Modbus",
-  "description": "Licznik 1-fazowy 45 A (1 moduł) z pomiarem dwukierunkowym. Rejestry tylko do odczytu FC04, wartości float32 big-endian. Fabrycznie 2400 bod 8N1; parametry transmisji zmienia się tylko przez Modbus (rejestry holding).",
+  "description": "Licznik 1-fazowy 45 A (1 moduł) z pomiarem dwukierunkowym. Rejestry tylko do odczytu FC04, wartości float32 big-endian. Fabrycznie 2400 bod 8N1; parametry transmisji można zmienić w menu (przytrzymanie przycisku 3 s) lub przez Modbus (rejestry holding).",
   "phases": 1,
   "source": "mbmd meters/rs485/sdm120.go (github.com/volkszaehler/mbmd); Eastron SDM120-Modbus User Manual V2.8: https://stromzähler.eu/media/7e/64/b6/1696582669/sdm120modbus_manual.pdf",
   "register_type": "input",

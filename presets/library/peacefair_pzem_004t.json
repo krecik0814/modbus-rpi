@@ -1,0 +1,22 @@
+{
+  "name": "Peacefair PZEM-004T v3.0",
+  "manufacturer": "Peacefair",
+  "model": "PZEM-004T v3.0 (10 A / 100 A) / PZEM-014 / PZEM-016",
+  "description": "Moduł pomiarowy AC 1-fazowy bez wyświetlacza: PZEM-004T v3.0 z interfejsem TTL (wymaga zasilania 5 V od strony TTL), PZEM-014 (10 A, bocznik) i PZEM-016 (100 A, przekładnik) z RS485. Rejestry FC04, liczby całkowite ze skalowaniem, 32-bitowe młodszym słowem naprzód (CDAB); moc i energia są bez znaku, więc moduł nie rozróżnia kierunku przepływu. Fabrycznie adres 1 (adres ogólny 0xF8 działa tylko przy jednym urządzeniu na magistrali); starsze PZEM-004T v1/v2 nie używają Modbus i nie są obsługiwane.",
+  "phases": 1,
+  "source": "Peacefair PZEM-004T V3.0 User Manual: https://innovatorsguru.com/wp-content/uploads/2019/06/PZEM-004T-V3.0-Datasheet-User-Manual.pdf; Peacefair PZEM-014/016 User Manual: https://images-na.ssl-images-amazon.com/images/I/81GtkIOyZaL.pdf; ESPHome pzemac: https://raw.githubusercontent.com/esphome/esphome/dev/esphome/components/pzemac/pzemac.cpp; Tasmota xnrg_05_pzem_ac.ino: https://raw.githubusercontent.com/arendst/Tasmota/master/tasmota/tasmota_xnrg_energy/xnrg_05_pzem_ac.ino; mandulaj/PZEM-004T-v30: https://raw.githubusercontent.com/mandulaj/PZEM-004T-v30/master/src/PZEM004Tv30.cpp",
+  "register_type": "input",
+  "byte_order": "CDAB",
+  "data_type": "uint16",
+  "serial": {"baudrate": 9600, "parity": "N", "stopbits": 1},
+  "probe": "voltage_l1",
+  "registers": {
+    "voltage_l1":     {"address": 0, "scale": 0.1, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":     {"address": 1, "type": "uint32", "scale": 0.001, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "power_l1":       {"address": 3, "type": "uint32", "scale": 0.1, "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "energy_import":  {"address": 5, "type": "uint32", "scale": 0.001, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "frequency":      {"address": 7, "scale": 0.1, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
+    "pf_l1":          {"address": 8, "scale": 0.01, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "alarm_power":    {"address": 9, "type": "int16", "scale": -1, "label": "Alarm przekroczenia mocy (1 = aktywny)", "unit": "", "group": "other", "decimals": 0}
+  }
+}

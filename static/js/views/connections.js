@@ -215,10 +215,12 @@ export function mount(root, ctx) {
       remove: btn('Usuń', 'btn-ghost danger-text', (e) => remove(id, e.currentTarget)),
     };
     const body = h('div', { class: 'bus-body' });
+    // lista urządzeń osobno: zawiera linki, więc przebudowujemy ją tylko przy zmianie (fokus klawiatury)
+    const usersBox = h('div', { class: 'bus-users' });
     const note = h('p', { class: 'bus-note small muted', hidden: true });
-    const el = h('article', { class: 'card bus-card', dataset: { id } }, body, note,
+    const el = h('article', { class: 'card bus-card', dataset: { id } }, body, usersBox, note,
       h('div', { class: 'bus-actions' }, btns.test, btns.edit, btns.add, btns.remove));
-    return { el, body, note, btns };
+    return { el, body, usersBox, usersSig: null, note, btns };
   }
 
   function connBadge(b) {
@@ -237,19 +239,28 @@ export function mount(root, ctx) {
     const rows = [
       ['Typ', KINDS[b.kind] || b.kind],
       ['Parametry', b.describe],
-      ['Urządzenia', users.length
-        ? users.map((d, i) => [i ? ', ' : '', h('a', { href: `#devices?edit=${enc(d.id)}` }, d.name || d.id), h('span', { class: 'muted' }, ` #${d.unit}`)])
-        : h('span', { class: 'muted' }, 'brak')],
     ];
+    const sig = JSON.stringify(users.map((d) => [d.id, d.name, d.unit]));
+    if (sig !== c.usersSig) {
+      c.usersSig = sig;
+      fill(c.usersBox, h('span', { class: 'label' }, 'Urządzenia'), users.length
+        ? h('ul', null, users.map((d) => h('li', null,
+          h('a', { href: `#devices?edit=${enc(d.id)}` }, d.name || d.id), h('span', { class: 'muted' }, ` (Unit ID ${d.unit})`))))
+        : h('p', { class: 'muted' }, 'brak - dodaj licznik przyciskiem "Dodaj urządzenie"'));
+    }
     if (s) {
       const errPct = s.requests ? ` (${num((s.errors / s.requests) * 100, 1)}%)` : '';
       rows.push(
         ['Zapytania', String(s.requests ?? 0)],
-        ['Błędy', h('span', { class: s.errors ? 'err-text' : '' }, `${s.errors ?? 0}${errPct}, w tym timeout: ${s.timeouts ?? 0}`)],
+        ['Błędy', h('span', { class: s.errors ? 'err-text' : '' }, `${s.errors ?? 0}${errPct}`,
+          h('span', { class: 'muted' }, ` (timeout: ${s.timeouts ?? 0}${s.exceptions != null ? `, wyjątki Modbus: ${s.exceptions}` : ''})`))],
         ['Średni czas', s.avg_ms != null ? `${num(s.avg_ms, 1)} ms` : '-'],
         ['Ostatnia odpowiedź', s.last_ok_ts ? `${fmtTime(s.last_ok_ts)} (${fmtAge(Math.max(0, Date.now() / 1000 - s.last_ok_ts))})` : '-'],
       );
-      if (s.last_error) rows.push(['Ostatni błąd', h('span', { class: 'err-text' }, s.last_error)]);
+      if (s.last_error) {
+        rows.push(['Ostatni błąd', [h('span', { class: 'err-text' }, s.last_error),
+          s.last_error_ts ? h('span', { class: 'muted' }, ` (${fmtTime(s.last_error_ts)})`) : null]]);
+      }
     }
     fill(c.body,
       h('div', { class: 'bus-head' },
@@ -261,7 +272,10 @@ export function mount(root, ctx) {
           connBadge(b))),
       h('dl', { class: 'kv' }, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
 
-    c.btns.edit.querySelector('.lbl').textContent = b.locked ? 'Szczegóły' : 'Edytuj';
+    const editLbl = b.locked ? 'Szczegóły' : 'Edytuj';
+    c.btns.edit.querySelector('.lbl').textContent = editLbl;
+    c.btns.edit.setAttribute('aria-label', `${editLbl} ${b.name || b.id}`);
+    c.btns.add.setAttribute('aria-label', `Dodaj urządzenie na ${b.name || b.id}`);
     c.btns.test.setAttribute('aria-label', `Testuj ${b.name || b.id}`);
     c.btns.remove.setAttribute('aria-label', `Usuń ${b.name || b.id}`);
     const cantDelete = b.locked || b.id === 'default';
@@ -299,8 +313,10 @@ export function mount(root, ctx) {
     poller.trigger();
   }
 
-  function track(m) {
+  function closeOpen() {
     if (openModal) openModal.close();
+  }
+  function track(m) {
     openModal = m;
     return m;
   }
@@ -311,6 +327,7 @@ export function mount(root, ctx) {
   /** Okno testu zapisanego połączenia (opcjonalnie z Unit ID). */
   function openPing(b) {
     if (!b) return;
+    closeOpen();
     const firstUnit = usersOf(b.id)[0];
     const unitIn = h('input', { type: 'number', id: uid(), min: 0, max: 255, step: 1, inputmode: 'numeric',
       value: firstUnit ? String(firstUnit.unit) : '', placeholder: 'np. 1' });
@@ -334,8 +351,9 @@ export function mount(root, ctx) {
       poller.trigger();
     } },
     h('div', { class: 'toolbar' },
-      field('Unit ID (opcjonalnie)', unitIn, 'Puste = tylko połączenie'),
+      field('Unit ID (opcjonalnie)', unitIn),
       go),
+    h('p', { class: 'small muted' }, 'Puste pole = sprawdzenie samego połączenia (otwarcie portu / połączenie TCP). Z Unit ID test sprawdza też odpowiedź licznika.'),
     result);
     const m = track(modal({
       title: `Test połączenia: ${b.name || b.id}`,
@@ -348,6 +366,7 @@ export function mount(root, ctx) {
 
   // ── formularz ─────────────────────────────────────────────
   function openForm(bus) {
+    closeOpen();
     const isNew = !bus;
     const locked = !!(bus && bus.locked);
     const b = { ...DEFAULTS, ...(bus || {}) };
@@ -364,8 +383,8 @@ export function mount(root, ctx) {
     const listId = uid();
     const serialIn = h('input', { type: 'text', id: uid(), autocomplete: 'off', spellcheck: 'false', list: listId, value: b.serial_port || '', placeholder: '/dev/ttyUSB0' });
     const datalist = h('datalist', { id: listId });
-    const portsBtn = h('button', { class: 'icon-btn', type: 'button', title: 'Odśwież listę portów', 'aria-label': 'Odśwież listę portów szeregowych', onclick: (e) => refreshPorts(e.currentTarget) },
-      h('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true', html: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>' }));
+    const portsBtn = h('button', { class: 'icon-btn', type: 'button', title: 'Odśwież listę portów', 'aria-label': 'Odśwież listę portów szeregowych', onclick: (e) => refreshPorts(e.currentTarget),
+      html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>' });
     const portChips = h('div', { class: 'port-chips' });
     const bauds = BAUDRATES.includes(Number(b.baudrate)) ? BAUDRATES : [...BAUDRATES, Number(b.baudrate)].sort((x, y) => x - y);
     const baudSel = select(bauds.map((v) => [String(v), String(v)]), String(b.baudrate), { id: uid() });
@@ -375,7 +394,7 @@ export function mount(root, ctx) {
     const serialPreview = h('span', { class: 'mono' });
     const timeoutIn = h('input', { type: 'text', id: uid(), inputmode: 'decimal', autocomplete: 'off', value: String(b.timeout).replace('.', ',') });
     const retriesIn = h('input', { type: 'number', id: uid(), min: 0, max: 10, step: 1, inputmode: 'numeric', value: String(b.retries) });
-    const delayIn = h('input', { type: 'number', id: uid(), min: 0, max: 10000, step: 1, inputmode: 'numeric', value: String(b.delay_ms) });
+    const delayIn = h('input', { type: 'number', id: uid(), min: 0, max: 5000, step: 1, inputmode: 'numeric', value: String(b.delay_ms) });
     const testUnitIn = h('input', { type: 'number', id: uid(), min: 0, max: 255, step: 1, inputmode: 'numeric', placeholder: 'np. 1',
       value: bus && usersOf(bus.id)[0] ? String(usersOf(bus.id)[0].unit) : '' });
     const testBtn = h('button', { class: 'btn btn-ghost', type: 'button', onclick: test }, 'Testuj połączenie');
@@ -384,10 +403,11 @@ export function mount(root, ctx) {
     const saveBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, isNew ? 'Dodaj połączenie' : 'Zapisz');
     const cancelBtn = h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => m.close() }, locked ? 'Zamknij' : 'Anuluj');
 
-    const tcpGroup = h('div', { class: 'form-grid' },
-      field('Host / adres IP', hostIn, 'Adres licznika lub bramki', { class: 'field span-2' }),
-      field('Port TCP', portIn, portHint));
-    const serialGroup = h('div', { class: 'form-grid' },
+    const tcpGroup = h('div', { class: 'form-grid host-grid' },
+      field('Host / adres IP', hostIn),
+      field('Port TCP', portIn),
+      h('div', { class: 'field span-2 small muted' }, portHint));
+    const serialGroup = h('div', { class: 'form-grid tight' },
       h('div', { class: 'field span-2' },
         h('label', { for: serialIn.id }, 'Port szeregowy'),
         h('div', { class: 'serial-row' }, serialIn, portsBtn),
@@ -422,6 +442,8 @@ export function mount(root, ctx) {
       const serial = isSerial();
       tcpGroup.hidden = serial;
       serialGroup.hidden = !serial;
+      // błędy z ukrytej grupy pól nie mają już znaczenia
+      for (const el of serial ? [hostIn, portIn] : [serialIn]) fieldError(el, null);
       kindHint.textContent = KIND_HELP[kindSel.value] || '';
       portHint.textContent = kindSel.value === 'rtu_over_tcp'
         ? 'Bramki transparentne często używają 8899 (USR, Elfin EW11)'
@@ -472,13 +494,13 @@ export function mount(root, ctx) {
         else set(serialIn, null);
       }
       const timeout = parseDecimal(timeoutIn.value);
-      if (timeout == null || timeout < 0.05 || timeout > 30) set(timeoutIn, 'Timeout w sekundach: 0,05-30');
+      if (timeout == null || timeout < 0.05 || timeout > 60) set(timeoutIn, 'Timeout w sekundach: 0,05-60');
       else set(timeoutIn, null);
       const retries = parseIntStrict(retriesIn.value);
       if (retries == null || retries > 10) set(retriesIn, 'Liczba 0-10');
       else set(retriesIn, null);
       const delay = parseIntStrict(delayIn.value);
-      if (delay == null || delay > 10000) set(delayIn, 'Liczba 0-10000 ms');
+      if (delay == null || delay > 5000) set(delayIn, 'Liczba 0-5000 ms');
       else set(delayIn, null);
       if (errs.length) { errs[0].focus(); return null; }
       return {
@@ -505,7 +527,7 @@ export function mount(root, ctx) {
       fill(formErr, h('strong', null, 'Serwer odrzucił zmiany: '), e.message || String(e),
         e.errors && e.errors.length ? h('ul', { class: 'errors' }, e.errors.map((x) => h('li', null, x))) : null);
       const low = (e.message || '').toLowerCase();
-      const map = [['identyfikator', idIn], ['host', hostIn], ['port szereg', serialIn], ['serial', serialIn],
+      const map = [['identyfikator', idIn], ['rodzaj', kindSel], ['host', hostIn], ['port szereg', serialIn], ['serial', serialIn],
         ['baud', baudSel], ['prędko', baudSel], ['parzyst', paritySel], ['parity', paritySel], ['stop', stopSel],
         ['bytesize', byteSel], ['timeout', timeoutIn], ['retries', retriesIn], ['ponowie', retriesIn], ['delay', delayIn],
         ['przerw', delayIn], ['port', isSerial() ? serialIn : portIn]];
@@ -593,14 +615,14 @@ export function mount(root, ctx) {
       serialGroup,
       h('details', { class: 'bus-advanced', open: !isNew && (b.retries !== 1 || b.delay_ms || b.timeout !== 1) ? true : null },
         h('summary', null, 'Zaawansowane: timeout, ponowienia, przerwa'),
-        h('div', { class: 'form-grid' },
+        h('div', { class: 'form-grid tight' },
           field('Timeout [s]', timeoutIn, 'Czas oczekiwania na odpowiedź'),
           field('Ponowienia', retriesIn, 'Przy braku odpowiedzi'),
           field('Przerwa [ms]', delayIn, 'Między ramkami; wolne liczniki: 20-50'))),
       h('div', { class: 'test-box' },
-        h('div', { class: 'toolbar' },
-          field('Unit ID do testu', testUnitIn, 'Opcjonalnie'),
-          testBtn),
+        h('div', { class: 'field' },
+          h('label', { for: testUnitIn.id }, 'Unit ID do testu (opcjonalnie)'),
+          h('div', { class: 'test-row' }, testUnitIn, testBtn)),
         testOut),
       h('div', { class: 'form-actions' }, cancelBtn, locked ? null : saveBtn));
 

@@ -4,7 +4,7 @@
   "model": "iEM3150 / iEM3155 / iEM3250 / iEM3255 / iEM3350 / iEM3355",
   "description": "Licznik 3-fazowy serii iEM3000 z Modbus RTU. Rejestry holding FC03: pomiary float32 big-endian (moce podawane w kW/kvar/kVA są przeliczane na W/var/VA), energie int64 w Wh/varh przeliczane na kWh/kvarh. Wersje iEM3150/3250/3350 nie udostępniają mocy biernej i pozornej, energii oddanej ani energii biernej.",
   "phases": 3,
-  "source": "mbmd meters/rs485/iem3000.go (github.com/volkszaehler/mbmd); Schneider Electric iEM3100/iEM3200/iEM3300 User manual DOCA0005EN-05: https://docs.rs-online.com/4cb7/0900766b81371165.pdf",
+  "source": "mbmd meters/rs485/iem3000.go (github.com/volkszaehler/mbmd); Schneider Electric iEM3100/iEM3200/iEM3300 User manual DOCA0005EN-05 (tabela Meter Data; adres = numer rejestru z instrukcji minus 1, jak w mbmd): https://docs.rs-online.com/4cb7/0900766b81371165.pdf",
   "register_type": "holding",
   "byte_order": "ABCD",
   "data_type": "float32",
