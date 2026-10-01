@@ -94,11 +94,13 @@ _HA_UNIT = {
     "Hz": ("frequency", "measurement"),
     "kWh": ("energy", "total_increasing"),
     "Wh": ("energy", "total_increasing"),
+    "MWh": ("energy", "total_increasing"),
     "°C": ("temperature", "measurement"),
     "%": (None, "measurement"),
 }
 _UNIT_NORMALIZE = {"VAr": "var", "VAR": "var", "kVAr": "kvar", "kVArh": "kvarh", "kVARh": "kvarh",
-                   "kvarh": "kvarh", "kwh": "kWh", "KWh": "kWh", "wh": "Wh", "hz": "Hz", "deg": "°"}
+                   "kvarh": "kvarh", "kwh": "kWh", "KWh": "kWh", "wh": "Wh", "hz": "Hz", "deg": "°",
+                   "mwh": "MWh", "MWH": "MWh", "VArh": "varh", "VARh": "varh", "vah": "VAh"}
 
 
 def normalize_unit(unit):
@@ -114,7 +116,7 @@ def ha_classes(key, unit):
     net = "net" in key.split("_")  # bilans (import - eksport) może maleć
     if dc == "energy":
         sc = "total" if net else "total_increasing"
-    if unit in ("kvarh", "kVAh"):
+    if unit in ("kvarh", "varh", "kVAh", "VAh"):  # liczniki bez klasy urządzenia w HA
         return None, "total" if net else "total_increasing"
     return dc, sc
 

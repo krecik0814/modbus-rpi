@@ -33,6 +33,7 @@ daje wartość = surowa * scale * 10^(wartość current_sf) + offset; z
 """
 
 import json
+import math
 import os
 import re
 import tempfile
@@ -111,6 +112,9 @@ def _number(value, name, errors, where, default):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         errors.append(f"{where}: '{name}' musi być liczbą")
         return default
+    if not math.isfinite(value):  # json przyjmuje NaN/Infinity, przeglądarka już nie
+        errors.append(f"{where}: '{name}' musi być skończoną liczbą")
+        return default
     return value
 
 
@@ -168,7 +172,7 @@ def normalize_preset(data):
     registers = {}
     for key, spec in regs_in.items():
         where = f"rejestr '{key}'"
-        if not REGISTER_KEY_RE.match(str(key)):
+        if not REGISTER_KEY_RE.fullmatch(str(key)):
             errors.append(f"{where}: klucz może zawierać tylko litery, cyfry, '_', '.', '-' (max 64 znaki)")
             continue
         if not isinstance(spec, dict):
@@ -202,7 +206,7 @@ def normalize_preset(data):
         invalid = spec.get("invalid", [])
         if not isinstance(invalid, list):
             invalid = [invalid]
-        if any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in invalid):
+        if any(isinstance(x, bool) or not isinstance(x, (int, float)) or math.isnan(x) for x in invalid):
             errors.append(f"{where}: 'invalid' musi być liczbą lub listą liczb")
             invalid = []
         # porównujemy jako float: JSON z przeglądarki gubi precyzję dużych liczb 64-bit
@@ -243,8 +247,8 @@ def normalize_preset(data):
             errors.append(f"rejestr '{key}': rejestr skali '{src}' nie może sam mieć 'scale_from'")
 
     probe = data.get("probe")
-    if probe is not None and probe not in registers:
-        errors.append(f"preset: 'probe' wskazuje nieistniejący rejestr '{probe}'")
+    if probe is not None and (not isinstance(probe, str) or probe not in registers):
+        errors.append(f"preset: 'probe' wskazuje nieistniejący rejestr {probe!r}")
         probe = None
 
     if errors:
@@ -264,13 +268,14 @@ def normalize_preset(data):
 
 def slugify(name):
     """Bezpieczna nazwa pliku z nazwy presetu (zachowuje polskie litery i spacje)."""
-    safe = "".join(c for c in str(name) if c.isalnum() or c in "-_ .").strip(" .")
-    safe = re.sub(r"\.{2,}", ".", safe)[:80].strip(" .")
+    safe = "".join(c for c in str(name) if c.isalnum() or c in "-_ .").lstrip(" .-").rstrip(" .")
+    safe = re.sub(r"\.{2,}", ".", safe)[:80].rstrip(" .")
     return safe or "preset"
 
 
 def valid_id(preset_id):
-    return (isinstance(preset_id, str) and bool(PRESET_ID_RE.match(preset_id))
+    # fullmatch: "$" w match() przepuszcza końcowy znak nowej linii
+    return (isinstance(preset_id, str) and bool(PRESET_ID_RE.fullmatch(preset_id))
             and ".." not in preset_id and not preset_id.endswith((".", " ")))
 
 
@@ -318,6 +323,8 @@ class PresetStore:
             norm = normalize_preset(raw)
         except PresetError as e:
             norm = e
+        except Exception as e:  # noqa: BLE001 - jeden zły plik nie może zepsuć listy presetów
+            norm = PresetError([f"błąd walidacji: {e}"])
         with self._lock:
             self._cache[path] = (mtime, raw, norm)
         return raw, norm
@@ -414,12 +421,15 @@ class PresetStore:
             raise PresetError([f"nieprawidłowy identyfikator presetu: {preset_id!r}"])
         clean = {k: v for k, v in data.items() if not str(k).startswith("_")}
         normalize_preset(clean)  # rzuca PresetError
+        try:
+            text = json.dumps(clean, indent=2, ensure_ascii=False, allow_nan=False)
+        except ValueError:
+            raise PresetError(["preset zawiera wartości NaN/Infinity (niedozwolone w JSON)"]) from None
         path = self._path(self.user_dir, preset_id)
         fd, tmp = tempfile.mkstemp(dir=str(self.user_dir), suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(clean, fh, indent=2, ensure_ascii=False)
-                fh.write("\n")
+                fh.write(text + "\n")
             os.replace(tmp, path)
         except BaseException:
             try:

@@ -10,6 +10,7 @@ czy odczytane wartości pasują do presetu (automatyczne rozpoznawanie licznika)
 import bisect
 import itertools
 import math
+import re
 import time
 from collections import Counter
 
@@ -288,7 +289,8 @@ _SWAPPED = ("BADC", "DCBA")
 
 def _kinds(h):
     alts = h.get("alternatives") if isinstance(h.get("alternatives"), list) else ()
-    return {h.get("guess")} | {a.get("guess") for a in alts if isinstance(a, dict)}
+    return {h.get("guess")} | {a.get("guess") for a in alts
+                               if isinstance(a, dict) and isinstance(a.get("guess"), str)}
 
 
 def _width(h):
@@ -305,6 +307,39 @@ def _same_order(count, a, b):
 
 def _family(h):
     return "float" if str(h.get("type", "")).startswith("float") else "int"
+
+
+_MIRROR = {"ABCD": "CDAB", "CDAB": "ABCD", "BADC": "DCBA", "DCBA": "BADC"}
+
+
+def _finite_or_none(v):
+    return v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v))
+
+
+def _hint_ok(h):
+    """Podpowiedź od klienta API: pola, których używamy, muszą mieć poprawne typy."""
+    return (isinstance(h.get("guess"), str) and h["guess"] in KINDS
+            and _finite_or_none(h.get("score")) and _finite_or_none(h.get("scale")))
+
+
+def _alignment_votes(items):
+    """Głosy na hipotezy (kolejność, parzystość adresu) dla wartości float32.
+
+    Przy skanie co 1 rejestr ABCD pod adresem p wygląda prawie jak CDAB pod 1-p
+    ("na zakładkę": starsze słowo jednej wartości + młodsze sąsiedniej). Prawdziwe
+    wyrównanie wygrywa na brzegach bloków (o jeden wiersz na blok) i przy zerach:
+    odczyt "na zakładkę" obok zera/niezmapowanego rejestru ma zerowe młodsze słowo
+    i daje okrągłe liczby (12288.0, 50.0) - takie głosy liczą się słabiej.
+    """
+    votes = Counter()
+    for a, h, wide, raw in items:
+        cands = {c["byte_order"]: c for c in wide if _family(c) == "float"}
+        if not wide and _width(h) > 1 and _family(h) == "float":
+            cands = {h["byte_order"]: h}           # wiersz bez surowych danych
+        for o, c in cands.items():
+            low = raw[1] if o in ("ABCD", "BADC") else raw[0]
+            votes[(o, a % 2)] += 0.3 if low == 0 and c.get("value") else 1.0
+    return votes
 
 
 def _select(items, order, parity, family):
@@ -444,19 +479,24 @@ def _closest(chosen, names, vals, kind, expected, tol, absolute=False):
     return best[1] if best else None
 
 
-def suggest_preset(rows, byte_order=None, register_type="input", name=None):
+def suggest_preset(rows, byte_order=None, register_type="input", name=None, alignment=None):
     """Szkic presetu (schemat 2) z wierszy skanu z podpowiedziami.
 
     Klucze kanoniczne (voltage_l1..l3, current_l1..l3, frequency, sumy...) tylko
-    przy pewnym wzorcu, pozostałe "<rodzaj>_0x<adres>". Domyślna kolejność bajtów =
-    najczęstsza wśród podpowiedzi (albo podana); typ/kolejność/skala w rejestrze
-    tylko gdy różnią się od domyślnych presetu. Złe parametry -> PresetError.
+    przy pewnym wzorcu, pozostałe "<rodzaj>_0x<adres>". Domyślna kolejność bajtów
+    i wyrównanie wartości 32-bit (adresy parzyste/nieparzyste) wynikają z danych,
+    chyba że podano byte_order / alignment ("even"/"odd"). Typ/kolejność/skala
+    w rejestrze tylko gdy różnią się od domyślnych presetu. Gdy dane pasują prawie
+    równie dobrze do drugiego wyrównania, wynik ma "_warnings" i "_alternative".
+    Złe parametry -> PresetError; niepoprawne wiersze są pomijane.
     """
     try:
         func = normalize_function(register_type)
         fixed = codec.normalize_byte_order(byte_order) if byte_order else None
     except ValueError as e:
         raise PresetError([str(e)]) from None
+    if alignment not in (None, "", "even", "odd"):
+        raise PresetError(["wyrównanie: 'even' (adresy parzyste) albo 'odd' (nieparzyste)"])
     items = []
     for row in rows or ():
         if not isinstance(row, dict) or not isinstance(row.get("hint"), dict):
@@ -465,45 +505,59 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None):
             addr = int(row.get("address"))
             h = {**row["hint"], "type": codec.normalize_data_type(row["hint"].get("type")),
                  "byte_order": codec.normalize_byte_order(row["hint"].get("byte_order"))}
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
-        if h.get("guess") not in KINDS or not 0 <= addr <= 0xFFFF - (_width(h) - 1):
+        if not _hint_ok(h) or not 0 <= addr <= 0xFFFF - (_width(h) - 1):
             continue
         raw = row.get("raw") if isinstance(row.get("raw"), list) else []
         raw = [_reg(v) for v in raw[:2]] + [None] * (2 - len(raw[:2]))
-        items.append([addr, h, [c for c in _candidates(*raw) if _width(c) > 1]])
+        items.append([addr, h, [c for c in _candidates(*raw) if _width(c) > 1], raw])
 
+    votes = _alignment_votes(items)
+    fam = Counter(_family(h) for _, h, _, _ in items)
+    forced = {"even": 0, "odd": 1}.get(alignment)
+    parity, ambiguous = None, None
     if fixed:
         order = fixed
+    elif votes and fam["float"] >= fam["int"]:
+        # hipoteza (kolejność, parzystość) z największą liczbą głosów; zamienione bajty
+        # (BADC/DCBA) muszą wygrać wyraźnie - pojedyncze "ładne" floaty to często przypadek
+        def strength(k):
+            o, p = k
+            if forced is not None and p != forced:
+                return (-1.0, 0, 0)
+            return (votes[k] * (0.75 if o in _SWAPPED else 1.0), p == 0, -codec.BYTE_ORDERS.index(o))
+        order, parity = max(votes, key=strength)
     else:
-        # Każdy wiersz głosuje na wszystkie kolejności, w których daje sensowny
-        # float32 (liczby całkowite tylko swoją podpowiedzią). Przy step=1 CDAB
-        # pod parzystym adresem wygląda prawie jak ABCD "na zakładkę" pod
-        # nieparzystym - przy remisie wygrywa wyrównanie parzyste.
-        votes = {"float": Counter(), "int": Counter()}
-        for a, h, wide in items:
-            orders = {c["byte_order"] for c in wide if _family(c) == "float"}
-            if not wide and _width(h) > 1 and _family(h) == "float":
-                orders = {h["byte_order"]}           # wiersz bez surowych danych
-            for o in orders:
-                votes["float"][o] += 1.0 if a % 2 == 0 else 0.85
-            if _width(h) > 1 and _family(h) == "int":
-                votes["int"][h["byte_order"]] += 1
-        cnt = votes["float"] or votes["int"]
-        order = max(codec.BYTE_ORDERS, key=lambda o: (cnt[o], -codec.BYTE_ORDERS.index(o))) if cnt else "ABCD"
+        # liczby całkowite: każdy wiersz głosuje swoją kolejnością (16-bit: tylko zamiana bajtów)
+        ints = Counter()
+        for _, h, _, _ in items:
+            if _family(h) == "int":
+                o = h["byte_order"]
+                ints["BADC" if _width(h) == 1 and o in _SWAPPED else "ABCD" if _width(h) == 1 else o] += 1
+        order = max(codec.BYTE_ORDERS, key=lambda o: (ints[o], -codec.BYTE_ORDERS.index(o))) if ints else "ABCD"
+    if forced is not None:
+        parity = forced
+    elif parity is None:
+        parity = 1 if votes[(order, 1)] > votes[(order, 0)] else 0
+        if not votes[(order, 0)] and not votes[(order, 1)]:
+            par = Counter(a % 2 for a, h, _, _ in items if _width(h) > 1 and h["byte_order"] == order)
+            parity = 1 if par[1] > par[0] else 0
+    if forced is None and votes[(order, parity)]:
+        mirror = (_MIRROR[order], 1 - parity)
+        if votes[mirror] >= 0.8 * votes[(order, parity)]:
+            ambiguous = mirror
 
     # podpowiedzi w innej kolejności: spróbuj zdekodować w dominującej
     for it in items:
-        addr, h, wide = it
+        addr, h, wide, _ = it
         if _width(h) > 1 and h["byte_order"] != order:
             alt = next((c for c in wide if c["byte_order"] == order), None)
             if alt:
                 it[1] = alt
 
-    par = Counter(a % 2 for a, h, _ in items if _width(h) > 1 and h["byte_order"] == order)
-    fam = Counter(_family(h) for _, h, _ in items)
-    chosen = _select([(a, _width(h), h) for a, h, _ in items], order,
-                     1 if par[1] > par[0] else 0, "int" if fam["int"] > fam["float"] else "float")
+    chosen = _select([(a, _width(h), h) for a, h, _, _ in items], order,
+                     parity, "int" if fam["int"] > fam["float"] else "float")
     names = _name(chosen)
 
     types = Counter(h.get("type") for _, _, h in chosen)
@@ -547,7 +601,8 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None):
         "name": str(name).strip() if name else f"Skan {time.strftime('%Y-%m-%d %H-%M')}",
         "manufacturer": "",
         "model": "",
-        "description": "Wygenerowany automatycznie ze skanu rejestrów - sprawdź adresy, typy i jednostki.",
+        "description": "Wygenerowany automatycznie ze skanu rejestrów - sprawdź adresy, typy i jednostki."
+                       + (" " + _ambiguity_text(order, parity, ambiguous) if ambiguous else ""),
         "source": "Modbus Dash - skaner rejestrów",
         "phases": phases,
         "register_type": func,
@@ -557,7 +612,18 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None):
     }
     if probe:
         preset["probe"] = probe
+    if ambiguous:
+        preset["_warnings"] = [_ambiguity_text(order, parity, ambiguous)]
+        preset["_alternative"] = {"byte_order": ambiguous[0], "alignment": "odd" if ambiguous[1] else "even"}
     return preset
+
+
+def _ambiguity_text(order, parity, alt):
+    where = ("nieparzystych", "parzystych")
+    return (f"UWAGA: wyrównanie wartości 32-bit jest niepewne - dane pasują do {order} od adresów "
+            f"{where[parity == 0]} i prawie równie dobrze do {alt[0]} od adresów {where[alt[1] == 0]}. "
+            "Porównaj wartości z wyświetlaczem licznika; jeśli się nie zgadzają, utwórz szkic z kolejnością "
+            f"{alt[0]} albo zeskanuj ponownie co 2 rejestry od adresu {'nieparzystego' if alt[1] else 'parzystego'}.")
 
 
 # ── ocena wiarygodności odczytu presetu ───────────────────────────────
@@ -570,11 +636,12 @@ _UNIT_CATEGORY = {
 }
 _GROUP_CATEGORY = {"voltage": "voltage", "line_volt": "line_volt", "current": "current",
                    "pf": "pf", "energy": "energy", "thd": "thd", "power": "power", "total": "power"}
-_WEIGHTS = {"voltage": 2, "line_volt": 2, "voltage_any": 2, "frequency": 2, "pf": 1.5,
+_WEIGHTS = {"voltage": 2, "line_volt": 2, "voltage_any": 2, "voltage_dc": 2, "frequency": 2, "pf": 1.5,
             "current": 1, "power": 1, "energy": 1, "energy_net": 0.5, "thd": 0.5,
             "angle": 0.5, "temperature": 0.5}
 # wynik dla dokładnego zera: napięcie/częstotliwość 0 są podejrzane
-_ZERO = {"voltage": 0.1, "line_volt": 0.1, "voltage_any": 0.1, "frequency": 0.05, "temperature": 0.3}
+_ZERO = {"voltage": 0.1, "line_volt": 0.1, "voltage_any": 0.1, "voltage_dc": 0.1, "frequency": 0.05,
+         "temperature": 0.3}
 
 
 def _category(key, spec):
@@ -598,6 +665,9 @@ def _category(key, spec):
     unit = normalize_unit(spec.get("unit") or "")
     group = spec.get("group") or ""
     if unit == "V":
+        label = str(spec.get("label") or "")
+        if key.lower().endswith("_dc") or "_dc_" in key.lower() or re.search(r"\bDC\b", label):
+            return "voltage_dc"   # np. PZEM-017 na akumulatorach 12-48 V albo panelach PV
         return group if group in ("voltage", "line_volt") else "voltage_any"
     return _UNIT_CATEGORY.get(unit) or _GROUP_CATEGORY.get(group)
 
@@ -618,6 +688,8 @@ def _value_score(cat, v):
         s = 1.0 if 340 <= v <= 480 else 0.7 if 150 <= v <= 280 else 0.0    # 208/240 V (USA)
     elif cat == "voltage_any":
         s = 1.0 if 80 <= v <= 280 or 340 <= v <= 480 else 0.0
+    elif cat == "voltage_dc":
+        s = 1.0 if 1 <= v <= 1000 else 0.0
     elif cat == "frequency":
         s = 1.0 if 45 <= v <= 65 else 0.0
     elif cat == "pf":

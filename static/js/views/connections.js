@@ -103,6 +103,11 @@ function parseDecimal(s) {
 /** Wynik testu połączenia: {ok, error, ms}. */
 function pingResult(res, unit, kind) {
   const ms = res.ms != null ? ` (${num(res.ms, 0)} ms)` : '';
+  if (res.ok && res.note) {
+    // UDP nie ma połączenia - bez Unit ID nic nie zostało sprawdzone
+    return h('div', { class: 'ping-res notice notice-warn' },
+      h('span', { class: 'badge badge-warn' }, 'Nie sprawdzono'), ' ', res.note + '.');
+  }
   if (res.ok) {
     return h('div', { class: 'ping-res notice notice-info' },
       h('span', { class: 'badge badge-ok' }, 'OK'), ' ',

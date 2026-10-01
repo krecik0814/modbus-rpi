@@ -217,7 +217,7 @@ code{background:var(--bg3);padding:1px 6px;border-radius:4px;font-family:var(--m
 /* ── powiadomienia ─────────────────────────────────────── */
 .toasts{position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:8px;z-index:200;max-width:min(420px,calc(100vw - 40px))}
 .toast{padding:11px 16px;border-radius:8px;font-size:13px;font-weight:500;animation:fadeIn .25s;box-shadow:0 8px 24px #0008;display:flex;gap:10px;align-items:flex-start}
-.toast-ok{background:#15803d;color:#fff}.toast-err{background:#b91c1c;color:#fff}.toast-info{background:var(--bg4);color:var(--text);border:1px solid var(--border2)}
+.toast-ok{background:#15803d;color:#fff}.toast-err{background:#b91c1c;color:#fff}.toast-warn{background:#a16207;color:#fff}.toast-info{background:var(--bg4);color:var(--text);border:1px solid var(--border2)}
 .toast button{margin-left:auto;background:none;border:none;color:inherit;opacity:.7;cursor:pointer;font-size:16px;line-height:1}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 

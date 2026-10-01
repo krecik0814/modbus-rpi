@@ -7,6 +7,7 @@ Flagi CLI (--serial itp.) nadpisują magistralę "default" tylko w pamięci.
 
 import copy
 import json
+import math
 import os
 import re
 import tempfile
@@ -28,7 +29,7 @@ class ConfigError(ValueError):
 
 
 def _check_id(kind, value):
-    if not isinstance(value, str) or not ID_RE.match(value):
+    if not isinstance(value, str) or not ID_RE.fullmatch(value):
         raise ConfigError(f"{kind}: identyfikator może zawierać małe litery, cyfry, '_' i '-' (max 32 znaki)")
     return value
 
@@ -62,13 +63,18 @@ def validate_device(dev_id, data, buses):
     preset = data.get("preset") or None
     if preset is not None and not isinstance(preset, str):
         raise ConfigError(f"urządzenie '{dev_id}': preset musi być tekstem")
+    enabled = data.get("enabled", True)
+    if enabled is None:
+        enabled = True
+    if not isinstance(enabled, bool):  # bool("false") == True - tylko prawdziwe wartości logiczne
+        raise ConfigError(f"urządzenie '{dev_id}': 'enabled' musi być wartością logiczną (true/false)")
     return {
         "name": str(data.get("name") or dev_id)[:64],
         "bus": bus,
         "unit": unit,
         "preset": preset,
         "interval": float(interval),
-        "enabled": bool(data.get("enabled", True)),
+        "enabled": enabled,
     }
 
 
@@ -80,16 +86,22 @@ def _merge(defaults, data, strict=False):
             if k not in defaults or v is None:
                 continue
             d = defaults[k]
+            number = isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
             if isinstance(d, bool):
                 ok = isinstance(v, bool)
-            elif isinstance(d, (int, float)):
-                ok = isinstance(v, (int, float)) and not isinstance(v, bool)
+            elif isinstance(d, int):
+                # 3600.0 z serializatora JSON -> 3600; 3600.5 to błąd (deque(maxlen=...) wymaga int)
+                ok = number and float(v).is_integer()
+                v = int(v) if ok else v
+            elif isinstance(d, float):
+                ok = number
             else:
                 ok = isinstance(v, type(d))
             if ok:
                 out[k] = v
             elif strict:
-                kind = "logiczna" if isinstance(d, bool) else "liczba" if isinstance(d, (int, float)) else "tekst"
+                kind = ("logiczna" if isinstance(d, bool) else "liczba całkowita" if isinstance(d, int)
+                        else "liczba" if isinstance(d, float) else "tekst")
                 raise ConfigError(f"pole '{k}' ma nieprawidłowy typ (oczekiwano: {kind})")
     return out
 
@@ -133,6 +145,9 @@ class ConfigStore:
         self._lock = threading.RLock()
         self._overrides = overrides or {}  # {"buses": {id: cfg}} - tylko w pamięci (CLI)
         self._listeners = []
+        # kolejność zapisów i powiadomień; słuchacze (np. MQTT) działają już bez self._lock,
+        # więc wolny słuchacz nie blokuje get() w wątkach odpytywania
+        self._write_lock = threading.RLock()
         self._data = self._load(defaults or {})
 
     def _load(self, defaults):
@@ -166,13 +181,13 @@ class ConfigStore:
                 devices[did] = validate_device(did, d, _AnyBus())
             except ConfigError:
                 continue
-        return {
-            "version": 1,
-            "buses": buses,
-            "devices": devices,
-            "mqtt": validate_mqtt(data.get("mqtt")),
-            "history": validate_history(data.get("history")),
-        }
+        sections = {}
+        for name, validator in (("mqtt", validate_mqtt), ("history", validate_history)):
+            try:
+                sections[name] = validator(data.get(name))
+            except ConfigError:  # wartość spoza zakresu (ręczna edycja pliku) - nie blokuje startu
+                sections[name] = validator(None)
+        return {"version": 1, "buses": buses, "devices": devices, **sections}
 
     # ── odczyt ─────────────────────────────────────────────────
     def get(self):
@@ -210,8 +225,7 @@ class ConfigStore:
                 pass
             raise
 
-    def _commit(self, section):
-        self._save()
+    def _notify(self, section):
         for fn in list(self._listeners):
             fn(section)
 
@@ -219,42 +233,52 @@ class ConfigStore:
         if self.is_locked_bus(bus_id):
             raise ConfigError(f"magistrala '{bus_id}' jest ustawiona flagami CLI - zmień parametry uruchomienia")
         bus = validate_bus(bus_id, data)
-        with self._lock:
-            self._data["buses"][bus_id] = bus
-            self._commit("buses")
+        with self._write_lock:
+            with self._lock:
+                self._data["buses"][bus_id] = bus
+                self._save()
+            self._notify("buses")
         return bus
 
     def delete_bus(self, bus_id):
-        with self._lock:
-            if bus_id == "default":
-                raise ConfigError("nie można usunąć magistrali 'default'")
-            if bus_id not in self._data["buses"]:
-                return False
-            users = [d for d, v in self._data["devices"].items() if v["bus"] == bus_id]
-            if users:
-                raise ConfigError(f"magistrala jest używana przez: {', '.join(users)}")
-            del self._data["buses"][bus_id]
-            self._commit("buses")
+        if self.is_locked_bus(bus_id):
+            raise ConfigError(f"magistrala '{bus_id}' jest ustawiona flagami CLI - zmień parametry uruchomienia")
+        with self._write_lock:
+            with self._lock:
+                if bus_id == "default":
+                    raise ConfigError("nie można usunąć magistrali 'default'")
+                if bus_id not in self._data["buses"]:
+                    return False
+                users = [d for d, v in self._data["devices"].items() if v["bus"] == bus_id]
+                if users:
+                    raise ConfigError(f"magistrala jest używana przez: {', '.join(users)}")
+                del self._data["buses"][bus_id]
+                self._save()
+            self._notify("buses")
             return True
 
     def put_device(self, dev_id, data):
         if self.is_locked_device(dev_id):
             raise ConfigError(f"urządzenie '{dev_id}' jest ustawione flagami CLI - zmień parametry uruchomienia")
-        with self._lock:
-            buses = set(self._data["buses"]) | set(self._overrides.get("buses", {}))
-            dev = validate_device(dev_id, data, buses)
-            self._data["devices"][dev_id] = dev
-            self._commit("devices")
+        with self._write_lock:
+            with self._lock:
+                buses = set(self._data["buses"]) | set(self._overrides.get("buses", {}))
+                dev = validate_device(dev_id, data, buses)
+                self._data["devices"][dev_id] = dev
+                self._save()
+            self._notify("devices")
         return dev
 
     def delete_device(self, dev_id):
         if self.is_locked_device(dev_id):
             raise ConfigError(f"urządzenie '{dev_id}' jest ustawione flagami CLI")
-        with self._lock:
-            if dev_id not in self._data["devices"]:
-                return False
-            del self._data["devices"][dev_id]
-            self._commit("devices")
+        with self._write_lock:
+            with self._lock:
+                if dev_id not in self._data["devices"]:
+                    return False
+                del self._data["devices"][dev_id]
+                self._save()
+            self._notify("devices")
             return True
 
     def put_section(self, name, data):
@@ -262,8 +286,10 @@ class ConfigStore:
         validator = {"mqtt": validate_mqtt, "history": validate_history}[name]
         if not isinstance(data, dict):
             raise ConfigError("oczekiwano obiektu")
-        with self._lock:
-            value = validator({**self._data[name], **data}, strict=True)
-            self._data[name] = value
-            self._commit(name)
+        with self._write_lock:
+            with self._lock:
+                value = validator({**self._data[name], **data}, strict=True)
+                self._data[name] = value
+                self._save()
+            self._notify(name)
         return value

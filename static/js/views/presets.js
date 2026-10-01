@@ -1358,7 +1358,9 @@ export function mount(root, ctx) {
     const d = ctx.handoff && ctx.handoff.draft;
     if (isObj(d) || typeof d === 'string') {
       openDraft(d, 'scanner');
-      toast('Szkic presetu ze skanera - sprawdź rejestry i zapisz', 'info');
+      const warns = isObj(d) && Array.isArray(d._warnings) ? d._warnings.filter((w) => typeof w === 'string') : [];
+      if (warns.length) toast(warns.join(' '), 'warn', 20000);
+      else toast('Szkic presetu ze skanera - sprawdź rejestry i zapisz', 'info');
     } else {
       setUrl({});
       renderDetail();

@@ -255,6 +255,7 @@ const SECURITY = `
   <tbody>
     <tr><td><code>--auth USER:HASŁO</code></td><td>logowanie HTTP Basic do panelu i API; zamiast flagi można ustawić zmienną <code>MODBUS_DASH_AUTH</code> (np. w usłudze systemd)</td><td>zawsze, gdy panel jest dostępny w sieci</td></tr>
     <tr><td><code>--host 127.0.0.1</code></td><td>nasłuch tylko lokalnie; z innego komputera przez tunel SSH: <code>ssh -L 5000:localhost:5000 pi@raspberrypi.local</code></td><td>gdy panel ma być prywatny</td></tr>
+    <tr><td><code>--allowed-host NAZWA</code></td><td>bez <code>--auth</code> panel odpowiada tylko pod adresem IP, <code>localhost</code> i nazwą komputera (ochrona przed <i>DNS rebinding</i>); tą flagą dodasz inną nazwę, np. <code>energia.lan</code> albo <code>*.home.lan</code></td><td>gdy otwierasz panel pod własną nazwą w DNS lub przez reverse proxy</td></tr>
     <tr><td><code>--allow-write</code></td><td>włącza zapis rejestrów i cewek (FC05, FC06, FC16) z interfejsu</td><td>tylko na czas konfiguracji licznika</td></tr>
     <tr><td><code>--debug</code></td><td>debugger Werkzeug pozwala wykonać dowolny kod, dlatego aplikacja wymusza wtedy nasłuch na 127.0.0.1</td><td>tylko przy programowaniu</td></tr>
   </tbody>
@@ -301,6 +302,7 @@ const CLI_ROWS = [
   ['--port', '5000', 'port HTTP panelu'],
   ['--auth USER:HASŁO', 'brak', 'logowanie HTTP Basic (lub zmienna MODBUS_DASH_AUTH)'],
   ['--allow-write', 'wyłączone', 'zezwala na zapis rejestrów i cewek z interfejsu'],
+  ['--allowed-host NAZWA', 'brak', 'dodatkowa nazwa hosta panelu bez --auth (można powtarzać; zmienna MODBUS_DASH_ALLOWED_HOSTS)'],
   ['--data-dir', '<katalog aplikacji>/data', 'katalog na konfigurację (config.json) i historię (history.sqlite)'],
   ['--presets-dir', '<katalog aplikacji>/presets', 'katalog presetów użytkownika'],
   ['--no-history', 'wyłączone', 'nie zapisuje historii w SQLite (zostaje bufor w pamięci)'],

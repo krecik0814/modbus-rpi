@@ -20,22 +20,26 @@ SCAN_CHUNK = 80
 
 # klucze używane do szybkiego rozpoznawania modelu (w kolejności ważności)
 DETECT_KEYS = ("voltage_l1", "voltage_l2", "voltage_l3", "frequency", "current_l1",
-               "pf_l1", "pf_total", "power_total", "energy_import", "voltage_l12")
+               "pf_l1", "pf_total", "power_total", "energy_import", "voltage_l12",
+               "voltage_dc", "current_dc", "power_dc")
 
 
 def _fatal(e):
     return getattr(e, "kind", "io") in ("connection", "timeout")
 
 
-def read_range(bus, unit, function, start, end, chunk=SCAN_CHUNK, max_requests=400):
+def read_range(bus, unit, function, start, end, chunk=SCAN_CHUNK, max_requests=None):
     """Czyta rejestry [start, end).
 
     Zwraca (wartości z None dla nieczytelnych, błąd|None, liczba zapytań, ostatni wyjątek
     Modbus|None, adres końca sprawdzonego zakresu). Gdy urządzenie odrzuci blok wyjątkiem
     Modbus, blok jest dzielony na pół aż do pojedynczych rejestrów - dzięki temu skan omija
     dziury w mapie rejestrów. Wyjątek 01 (niedozwolona funkcja) dotyczy całej funkcji, więc
-    kończy skan od razu.
+    kończy skan od razu. Limit zapytań domyślnie rośnie z zakresem (dzielenie nieczytelnych
+    obszarów kosztuje ok. 2 zapytania na rejestr).
     """
+    if max_requests is None:
+        max_requests = max(400, 2 * (end - start))
     bits = function in ("coil", "discrete")
     limit = MAX_BITS if bits else MAX_REGS
     chunk = max(1, min(chunk, limit))
@@ -66,9 +70,10 @@ def read_range(bus, unit, function, start, end, chunk=SCAN_CHUNK, max_requests=4
                 covered = end
                 break
             if count > 1:
+                # parzyste podziały - pary rejestrów (float32) zostają razem; 3 -> 2 + 1
                 half = count // 2
-                if half % 2 and half > 1:
-                    half -= 1  # parzyste podziały - pary rejestrów float32 zostają razem
+                if half % 2:
+                    half = half - 1 if half > 1 else (2 if count > 2 else 1)
                 pending[0:0] = [(addr, half), (addr + half, count - half)]
             else:
                 covered = max(covered, addr + 1)
@@ -120,13 +125,14 @@ def _ranges(start, values):
 
 
 @contextlib.contextmanager
-def quick(bus, timeout):
-    """Tymczasowo krótszy timeout (o ile transport to wspiera)."""
+def quick(bus, timeout, settle=None):
+    """Tymczasowo krótszy timeout (o ile transport to wspiera). settle: patrz Bus.override."""
     override = getattr(bus, "override", None)
     if override is None:
         yield
         return
-    with override(timeout=timeout, retries=0):
+    kw = {} if settle is None else {"settle": settle}
+    with override(timeout=timeout, retries=0, **kw):
         yield
 
 
@@ -135,7 +141,9 @@ def scan_units(job, bus, first, last, function, address, count, timeout):
     units = list(range(first, last + 1))
     job.progress(0, len(units), "Szukanie urządzeń...")
     found = []
-    with quick(bus, timeout):
+    # brak odpowiedzi to tu norma - bez długiego czekania na spóźnione odpowiedzi
+    # (odpowiedź innego urządzenia odrzuca kontrola Unit ID w transporcie)
+    with quick(bus, timeout, settle=0.05):
         for i, unit in enumerate(units):
             if job.cancelled:
                 break

@@ -126,6 +126,7 @@ w interfejsie oznaczona jako zablokowana). Bez flag magistrale i urządzenia kon
 | `--port` | port HTTP dashboardu | `5000` |
 | `--auth USER:HASŁO` | logowanie HTTP Basic (lub zmienna `MODBUS_DASH_AUTH`) | wyłączone |
 | `--allow-write` | zezwala na zapis rejestrów/cewek ze skanera | wyłączone |
+| `--allowed-host NAZWA` | dodatkowa nazwa hosta dashboardu bez `--auth`, np. `energia.lan`, `*.home.lan` (można powtarzać; zmienna `MODBUS_DASH_ALLOWED_HOSTS`) | IP, `localhost`, nazwa komputera |
 | `--data-dir` | katalog na `config.json` i `history.sqlite` | `<katalog aplikacji>/data` |
 | `--presets-dir` | katalog presetów użytkownika | `<katalog aplikacji>/presets` |
 | `--no-history` | bez historii w SQLite | |
@@ -178,7 +179,16 @@ Interfejs działa na telefonie (menu zwija się do górnego paska).
   Na jednej magistrali RS-485 może być wiele liczników (różne Unit ID).
 
 Odczyty wykonuje proces w tle - przeglądarki dostają wartości z pamięci, więc kilka otwartych kart nie zwiększa ruchu
-na magistrali. Gdy licznik nie odpowiada, odstęp między próbami rośnie (do 30 s), żeby nie blokować innych urządzeń.
+na magistrali. Gdy licznik nie odpowiada, odstęp między próbami rośnie (do 30 s, ale nigdy nie jest krótszy niż
+ustawiony interwał), żeby nie blokować innych urządzeń.
+
+- Ramki RTU (RS-485 i RTU over TCP) nie mają numerów transakcji. Każda odpowiedź jest sprawdzana (funkcja, Unit ID,
+  liczba rejestrów), a po timeoucie albo udanym ponowieniu aplikacja czeka na spóźnioną odpowiedź i ją odrzuca -
+  kolejne bloki nie dostaną danych poprzednich, także za przezroczystą bramką (USR, Elfin).
+- Gdy licznik odrzuci blok wyjątkiem, odczyt jest dzielony na mniejsze części, a podział zostaje zapamiętany tylko
+  wtedy, gdy pomógł. Wyjątki 05/06 („zajęte”) nie zmieniają planu, a plan jest układany od nowa co godzinę.
+- Ta sama nazwa portu pod różnymi aliasami (`/dev/serial0` i `/dev/ttyAMA0`, `/dev/serial/by-id/...` i
+  `/dev/ttyUSB0`) to jedna magistrala; usunięte albo zmienione połączenie od razu zwalnia port.
 
 ## Presety - format
 
@@ -308,11 +318,15 @@ utwórz preset i podziel się nim.
 4. **Live** - skan powtarzany co ~1.5 s, zmienione komórki są podświetlane. Włącz czajnik i zobacz, które rejestry
    skoczyły o ~2000 W.
 5. **Utwórz preset** - propozycja presetu z rozpoznanych rejestrów (z kluczami kanonicznymi, gdy wzorzec jest pewny)
-   trafia do edytora; zapisujesz ją po poprawkach.
+   trafia do edytora; zapisujesz ją po poprawkach. Kolejność bajtów i wyrównanie wartości 32-bit (adresy parzyste
+   albo nieparzyste) aplikacja wybiera sama na podstawie wszystkich wierszy. Przy skanie *Co 1 rejestr* dane często
+   pasują prawie równie dobrze do drugiego wariantu (np. ABCD od adresów parzystych i CDAB od nieparzystych) - wtedy
+   szkic dostaje ostrzeżenie: porównaj wartości z wyświetlaczem licznika albo wybierz drugą kolejność ręcznie.
 
 Skaner omija dziury w mapie rejestrów: gdy licznik odrzuci zapytanie (wyjątek 02), blok jest dzielony aż do
-pojedynczych rejestrów, a nieczytelne zakresy są wypisane nad tabelą. Zapytania mają maks. 80 rejestrów (limit m.in.
-liczników Eastron).
+pojedynczych rejestrów (pary rejestrów zostają razem), a nieczytelne zakresy są wypisane nad tabelą. Zapytania mają
+maks. 80 rejestrów (limit m.in. liczników Eastron). Limit zapytań na jeden skan rośnie z zakresem (co najmniej 400);
+jeśli zostanie osiągnięty, niesprawdzona reszta zakresu jest pokazana osobno, a nie jako „nieczytelna”.
 
 **Szukaj urządzeń** sprawdza Unit ID z zakresu (np. 1-247) krótkim zapytaniem. **Rozpoznaj licznik** (Urządzenia)
 odczytuje kilka kluczowych rejestrów według każdego presetu z biblioteki i ocenia, który daje wiarygodne wartości.
@@ -335,7 +349,15 @@ odczytuje kilka kluczowych rejestrów według każdego presetu z biblioteki i oc
 | `modbus-dash/<urządzenie>/availability` | `online` / `offline` |
 
 Z włączonym **Home Assistant discovery** każda wielkość pojawia się w HA jako encja z poprawną klasą
-(`voltage`, `current`, `power`, `energy` z `total_increasing` itd.) - energia od razu nadaje się do panelu Energia.
+(`voltage`, `current`, `power`, `energy` z `total_increasing` itd.) - energia (Wh, kWh, MWh) od razu nadaje się do
+panelu Energia.
+
+- Edycja presetu od razu aktualizuje encje (nowe rejestry pojawiają się, usunięte znikają).
+- Urządzenie wyłączone albo z niepoprawnym presetem jest w HA `offline`, a nie „zamrożone” na ostatnim odczycie.
+- Encje usuniętych urządzeń są sprzątane przy każdym połączeniu z brokerem (także po restarcie aplikacji), a zmiana
+  prefiksu topików usuwa encje ze starym prefiksem.
+- Zapisane hasło MQTT nie jest pokazywane w interfejsie. Po zmianie adresu, portu, użytkownika albo TLS trzeba je
+  wpisać ponownie - aplikacja nie wyśle zapisanego hasła do innego brokera.
 
 **Prometheus**: `GET /metrics`, np.
 
@@ -414,6 +436,13 @@ Licznik            Nakładka RS-485             Raspberry Pi
   (albo `Environment=MODBUS_DASH_AUTH=...` w systemd) lub ogranicz nasłuch `--host 127.0.0.1`.
 - Zapytania zmieniające stan muszą mieć `Content-Type: application/json` i nie mogą pochodzić z obcej strony
   (ochrona przed CSRF - złośliwa strona otwarta w przeglądarce nie skasuje Twoich presetów).
+- Bez `--auth` dashboard odpowiada tylko pod adresem IP, nazwą `localhost` i nazwą tego komputera (także
+  `nazwa.local`) - to chroni przed atakiem *DNS rebinding*, w którym obca strona podszywa się pod adres Raspberry Pi.
+  Jeśli otwierasz dashboard pod inną nazwą (wpis w DNS, reverse proxy), dodaj ją: `--allowed-host energia.lan`
+  (albo `*.home.lan`). Z włączonym `--auth` nazwa hosta nie jest sprawdzana.
+- Port szeregowy musi być ścieżką urządzenia (`/dev/ttyUSB0`, `COM3`) - adresy URL pyserial (`socket://`, `spy://`...)
+  są odrzucane.
+- Serwer waitress odrzuca zapytania większe niż 2 MB, zanim cokolwiek zapisze na dysk.
 - Zapis do urządzeń (`/api/write`) jest wyłączony, dopóki nie podasz `--allow-write`.
 - `--debug` uruchamia debugger Werkzeug, który pozwala wykonać dowolny kod - dlatego wymusza nasłuch na 127.0.0.1.
 - Presety są zapisywane atomowo, identyfikatory są walidowane (brak path traversal). Plików biblioteki wbudowanej nie
@@ -449,7 +478,7 @@ Wszystkie odpowiedzi w JSON; błędy jako `{"error": "..."}` z kodem 4xx/5xx.
 | `/api/presets/validate` | POST | walidacja presetu |
 | `/api/buses` | GET | lista połączeń (magistral) |
 | `/api/buses/{id}` | PUT, DELETE | zapis / usunięcie połączenia (`?create=1`: błąd 409 zamiast nadpisania) |
-| `/api/buses/{id}/ping`, `/api/buses/test` | POST | test połączenia |
+| `/api/buses/{id}/ping`, `/api/buses/test` | POST | test połączenia (bez `unit`: nawiązanie połączenia; UDP: tylko z `unit`) |
 | `/api/serial-ports` | GET | dostępne porty szeregowe |
 | `/api/devices` | GET | lista urządzeń ze stanem |
 | `/api/devices/{id}` | PUT, DELETE | zapis / usunięcie urządzenia (`?create=1`: błąd 409 zamiast nadpisania) |
@@ -460,7 +489,7 @@ Wszystkie odpowiedzi w JSON; błędy jako `{"error": "..."}` z kodem 4xx/5xx.
 | `/api/scan` | POST | skan zakresu rejestrów |
 | `/api/scan/units`, `/api/detect` | POST | szukanie Unit ID / rozpoznawanie modelu (zadania w tle) |
 | `/api/jobs/{id}` | GET, DELETE | postęp / anulowanie zadania |
-| `/api/scan/preset` | POST | propozycja presetu z wyników skanu |
+| `/api/scan/preset` | POST | propozycja presetu z wyników skanu (opcjonalnie `byte_order`, `alignment`: `even`/`odd`; niepewne wyrównanie: `_warnings`, `_alternative`) |
 | `/api/write` | POST | zapis rejestru / cewki (tylko z `--allow-write`) |
 | `/api/settings/mqtt`, `/api/settings/history` | GET, PUT | integracje |
 | `/metrics` | GET | metryki Prometheus |

@@ -3,8 +3,10 @@
 import csv
 import hmac
 import io
+import ipaddress
 import logging
 import platform
+import socket
 import time
 from datetime import datetime
 from urllib.parse import urlsplit
@@ -12,7 +14,7 @@ from urllib.parse import urlsplit
 from flask import Flask, Response, jsonify, request, send_from_directory
 
 from . import __version__, metrics, mqtt, scanner
-from .config import ConfigError
+from .config import ConfigError, validate_mqtt
 from .planner import PresetReader
 from .presets import PresetError, PresetFileError, valid_id
 from .transport import ModbusError, TransportConfig, list_serial_ports, pymodbus_version
@@ -35,6 +37,55 @@ def _body():
     if not isinstance(data, dict):
         raise ApiError("oczekiwano obiektu JSON w treści zapytania")
     return data
+
+
+def _opt_body():
+    """Treść opcjonalna: brak albo pusta = {}, ale JSON innego typu niż obiekt to błąd 400."""
+    if not request.get_data(cache=True):
+        return {}
+    return _body()
+
+
+def _host_name(host):
+    """Nagłówek Host -> sama nazwa (bez portu, małe litery; [IPv6] bez nawiasów)."""
+    host = (host or "").strip().lower()
+    if host.startswith("["):
+        return host[1:].partition("]")[0]
+    if host.count(":") == 1:
+        host = host.partition(":")[0]
+    return host.rstrip(".")
+
+
+def host_allowed(host, extra=()):
+    """Czy dashboard może odpowiadać pod tą nazwą hosta (ochrona przed DNS rebinding).
+
+    Zawsze: adresy IP, localhost (*.localhost), nazwa tego komputera (także .local).
+    extra: nazwy z --allowed-host; "*.dom.lan" = dowolna poddomena, "*" = każda nazwa.
+    """
+    name = _host_name(host)
+    if not name:
+        return False
+    try:
+        ipaddress.ip_address(name.split("%")[0])
+        return True
+    except ValueError:
+        pass
+    if name == "localhost" or name.endswith(".localhost"):
+        return True
+    local = socket.gethostname().lower().rstrip(".")
+    short = local.split(".")[0]
+    if name in (local, short, f"{short}.local", f"{local}.local"):
+        return True
+    for pattern in extra:
+        pattern = str(pattern).strip().lower().rstrip(".")
+        if pattern == "*" or name == pattern or (pattern.startswith("*.") and name.endswith(pattern[1:])):
+            return True
+    return False
+
+
+def _csv_safe(text):
+    """Komórka CSV, której arkusz nie uzna za formułę (=, +, -, @ na początku)."""
+    return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
 
 
 def _int(data, name, default, lo, hi):
@@ -78,6 +129,14 @@ def create_app(ctx):
     @app.before_request
     def _guard():
         auth = opts.get("auth")
+        if not auth and not host_allowed(request.host, opts.get("allowed_hosts") or ()):
+            # bez hasła strona z obcej domeny przemapowanej na ten adres (DNS rebinding)
+            # mogłaby czytać i zmieniać konfigurację - odpowiadamy tylko znanym nazwom
+            msg = (f"nieznana nazwa hosta '{_host_name(request.host)}' - dodaj ją opcją --allowed-host "
+                   "albo włącz logowanie (--auth)")
+            if request.path.startswith("/api/"):
+                return jsonify({"error": msg}), 403
+            return Response(msg + "\n", 403, mimetype="text/plain; charset=utf-8")
         if auth:
             a = request.authorization
             ok = (a is not None and a.type == "basic"
@@ -328,7 +387,7 @@ def create_app(ctx):
 
     @app.post("/api/buses/<bus_id>/ping")
     def api_bus_ping(bus_id):
-        data = request.get_json(silent=True) or {}
+        data = _opt_body()
         res = bus_by_id(bus_id).ping(data.get("unit"))
         return jsonify(res), (200 if res.get("ok") else 502)
 
@@ -350,7 +409,7 @@ def create_app(ctx):
     @app.post("/api/ping")
     def api_ping():
         """Zgodność wstecz: test połączenia (host/port albo domyślna magistrala)."""
-        data = request.get_json(silent=True) or {}
+        data = _opt_body()
         res = bus_from_request(data).ping(data.get("unit"))
         return jsonify(res), (200 if res.get("ok") else 502)
 
@@ -397,7 +456,7 @@ def create_app(ctx):
         return jsonify(ctx.poller.values(dev_id))
 
     def history_data(dev_id):
-        rt = runtime_or_404(dev_id)
+        runtime_or_404(dev_id)
         seconds = _int(request.args, "seconds", 600, 10, 3650 * 86400)
         keys = [k for k in request.args.get("keys", "").split(",") if k] or None
         source = request.args.get("source", "auto")
@@ -437,7 +496,7 @@ def create_app(ctx):
         meta = (ctx.poller.values(dev_id) or {}).get("meta", {})
         buf = io.StringIO()
         w = csv.writer(buf, delimiter=";")
-        w.writerow(["czas"] + [f"{meta.get(k, {}).get('label', k)} [{meta.get(k, {}).get('unit', '')}]"
+        w.writerow(["czas"] + [_csv_safe(f"{meta.get(k, {}).get('label', k)} [{meta.get(k, {}).get('unit', '')}]")
                                for k in data["keys"]])
         for row in data["points"]:
             w.writerow([datetime.fromtimestamp(row[0]).isoformat(sep=" ", timespec="seconds")] +
@@ -507,9 +566,12 @@ def create_app(ctx):
         rows = data.get("registers")
         if not isinstance(rows, list):
             raise ApiError("'registers' musi być listą wierszy skanu")
+        for field in ("byte_order", "register_type", "name", "alignment"):
+            if data.get(field) is not None and not isinstance(data[field], str):
+                raise ApiError(f"'{field}' musi być tekstem")
         preset = heuristics.suggest_preset(rows, byte_order=data.get("byte_order"),
-                                           register_type=data.get("register_type", "input"),
-                                           name=data.get("name"))
+                                           register_type=data.get("register_type") or "input",
+                                           name=data.get("name"), alignment=data.get("alignment"))
         return jsonify(preset)
 
     @app.post("/api/scan/units")
@@ -591,8 +653,19 @@ def create_app(ctx):
     @app.put("/api/settings/mqtt")
     def api_put_mqtt():
         data = _body()
-        if data.get("password") == "********":
-            data["password"] = ctx.config.get()["mqtt"]["password"]
+        stored = ctx.config.get()["mqtt"]
+        if data.get("password", "********") == "********":
+            # zapisane hasło (zamaskowane w GET) zostaje tylko dla tego samego brokera i konta -
+            # inaczej każdy z dostępem do API mógłby je przechwycić, wskazując własny serwer
+            try:
+                new = validate_mqtt({**stored, **{k: v for k, v in data.items() if k != "password"}}, strict=True)
+            except ConfigError as e:
+                raise ApiError(str(e)) from None
+            moved = any(new[k] != stored[k] for k in ("host", "port", "username", "tls"))
+            if moved and stored["password"]:
+                raise ApiError("zmieniono brokera, konto albo TLS - wpisz hasło MQTT ponownie", 400,
+                               field="password")
+            data["password"] = stored["password"]
         ctx.config.put_section("mqtt", data)
         return api_get_mqtt()
 

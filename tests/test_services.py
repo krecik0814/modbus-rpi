@@ -194,3 +194,121 @@ def test_cancelled_job_does_not_block_new_one():
     job2 = jobs.start("units", lambda j: None)
     assert job2.id != job.id
     ev.set()
+
+
+# ── regresje z przeglądu ──────────────────────────────────────
+def test_history_bucket_continues_after_restart(tmp_path):
+    path = tmp_path / "h.sqlite"
+    b = (int(time.time()) // 900 - 1) * 900
+    db = HistoryDB(path, bucket_seconds=900)
+    for i, v in enumerate([10.0, 20.0, 30.0]):
+        db.on_sample("d", None, {"ok": True, "ts": b + i, "values": {"p": v}})
+    db.close()  # SIGTERM w połowie przedziału
+    db = HistoryDB(path, bucket_seconds=900)
+    db._seed_before = b + 900  # przedział zaczął się przed "startem"
+    for i, v in enumerate([40.0, 50.0]):
+        db.on_sample("d", None, {"ok": True, "ts": b + 10 + i, "values": {"p": v}})
+    db.flush()
+    row = db._db.execute("SELECT avg, min, max, n FROM samples WHERE device='d' AND key='p'").fetchone()
+    assert row == (30.0, 10.0, 50.0, 5)
+    db.close()
+
+
+def test_history_query_does_not_block_samples(tmp_path, monkeypatch):
+    import threading
+    db = HistoryDB(tmp_path / "h.sqlite", bucket_seconds=10)
+    db.on_sample("d", None, {"ok": True, "ts": time.time(), "values": {"p": 1.0}})
+    started, release = threading.Event(), threading.Event()
+    real = db._rdb
+
+    class SlowConn:
+        def execute(self, *a):
+            started.set()
+            release.wait(2)
+            return real.execute(*a)
+    db._rdb = SlowConn()
+    th = threading.Thread(target=db.query, args=("d", ["p"], time.time() - 60))
+    th.start()
+    assert started.wait(2)
+    t0 = time.monotonic()
+    db.on_sample("d", None, {"ok": True, "ts": time.time() + 20, "values": {"p": 2.0}})
+    assert time.monotonic() - t0 < 0.5  # zapis próbki nie czeka na trwający odczyt
+    release.set()
+    th.join(2)
+    db._rdb = real
+    db.close()
+
+
+def test_backoff_never_shortens_interval(setup):
+    store, bus, cfg, poller = setup
+    cfg.data["devices"]["d1"]["interval"] = 600.0
+    bus.silent_units.add(1)
+    poller.reload()
+    rt = poller.runtime("d1")
+    for _ in range(4):
+        t0 = time.monotonic()
+        poller.poll(rt)
+        assert rt.next_due - t0 >= 599
+    cfg.data["devices"]["d1"]["interval"] = 5.0
+    poller.reload()
+    rt = poller.runtime("d1")
+    rt.fail_count = 0
+    delays = []
+    for _ in range(5):
+        t0 = time.monotonic()
+        poller.poll(rt)
+        delays.append(round(rt.next_due - t0))
+    assert delays[0] == 5 and delays[1:] == [10, 20, 30, 30]
+
+
+def test_broken_preset_keeps_history_and_notifies(setup):
+    store, bus, cfg, poller = setup
+    seen = []
+    poller.add_preset_listener(seen.append)
+    poller.reload()
+    for _ in range(3):
+        poller.read_now("d1")
+    assert len(poller.history("d1", 60)["points"]) == 3 and seen == ["d1"]
+    path = store.user_dir / "m.json"
+    good = path.read_text(encoding="utf-8")
+    path.write_text(good[:20], encoding="utf-8")
+    import os
+    os.utime(path, ns=(time.time_ns() + 10**9, time.time_ns() + 10**9))
+    assert poller.read_now("d1") is None
+    st = poller.values("d1")
+    assert st["status"]["state"] == "no_preset" and st["meta"] and seen == ["d1", "d1"]
+    assert len(poller.history("d1", 60)["points"]) == 3  # bufor nie zniknął
+    path.write_text(good, encoding="utf-8")
+    os.utime(path, ns=(time.time_ns() + 2 * 10**9, time.time_ns() + 2 * 10**9))
+    assert poller.read_now("d1")["ok"]
+    assert len(poller.history("d1", 60)["points"]) == 4 and seen == ["d1", "d1", "d1"]
+
+
+def test_config_store_types_and_listeners_outside_lock(tmp_path):
+    import threading
+    from modbus_dash.config import ConfigError, ConfigStore
+    store = ConfigStore(tmp_path / "c.json", overrides={"buses": {"cli": {"kind": "tcp", "host": "127.0.0.1"}}})
+    with pytest.raises(ConfigError):
+        store.put_section("history", {"memory_points": 3600.5})
+    assert store.put_section("history", {"memory_points": 7200.0})["memory_points"] == 7200
+    with pytest.raises(ConfigError):
+        store.delete_bus("cli")
+    with pytest.raises(ConfigError):
+        store.put_device("x", {"bus": "default", "enabled": "false"})
+    assert store.put_device("x", {"bus": "default", "enabled": None})["enabled"] is True
+    # słuchacz nie trzyma blokady konfiguracji - odczyt z innego wątku nie czeka
+    got = []
+
+    def slow(section):
+        th = threading.Thread(target=lambda: got.append(store.get()["mqtt"]["interval"]))
+        th.start()
+        th.join(1)
+    store.on_change(slow)
+    store.put_section("mqtt", {"interval": 7})
+    assert got == [7]
+    # wartość spoza zakresu w pliku nie blokuje startu
+    import json as _json
+    data = _json.loads((tmp_path / "c.json").read_text(encoding="utf-8"))
+    data["history"]["memory_points"] = 5
+    (tmp_path / "c.json").write_text(_json.dumps(data), encoding="utf-8")
+    assert ConfigStore(tmp_path / "c.json").get()["history"]["memory_points"] == 3600

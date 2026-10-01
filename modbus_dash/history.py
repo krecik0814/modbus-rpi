@@ -2,6 +2,8 @@
 
 Próbki z pollera są agregowane w pamięci do przedziałów (domyślnie 60 s) i
 zapisywane jako średnia/min/maks - jeden zapis na przedział oszczędza kartę SD.
+Odczyty (wykresy, eksport CSV) idą osobnym połączeniem, więc długie zapytanie nie
+wstrzymuje zapisu próbek (a z nim odpytywania liczników).
 """
 
 import logging
@@ -31,16 +33,21 @@ class HistoryDB:
         self._lock = threading.Lock()
         self._acc = {}          # (device, key) -> [bucket_ts, sum, min, max, last, n]
         self._last_cleanup = 0.0
+        # przedziały zaczęte przed tą chwilą mogą już być w bazie (restart, zmiana agregacji)
+        self._seed_before = time.time()
         self._db = sqlite3.connect(self.path, check_same_thread=False, timeout=10)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.execute("PRAGMA synchronous=NORMAL")
         self._db.executescript(SCHEMA)
+        self._rlock = threading.Lock()
+        self._rdb = sqlite3.connect(self.path, check_same_thread=False, timeout=10)
 
     def configure(self, bucket_seconds=None, retention_days=None):
         with self._lock:
             if bucket_seconds and int(bucket_seconds) != self.bucket:
                 self._flush_all()
                 self.bucket = int(bucket_seconds)
+                self._seed_before = time.time()
             if retention_days:
                 self.retention_days = int(retention_days)
 
@@ -61,7 +68,7 @@ class HistoryDB:
                     rows.append(self._row(device_id, key, acc))
                     acc = None
                 if acc is None:
-                    self._acc[(device_id, key)] = [bucket_ts, v, v, v, v, 1]
+                    self._acc[(device_id, key)] = self._seed(device_id, key, bucket_ts, v)
                 else:
                     acc[1] += v
                     acc[2] = min(acc[2], v)
@@ -72,6 +79,23 @@ class HistoryDB:
                 self._write(rows)
             if time.time() - self._last_cleanup > 3600:
                 self._cleanup()
+
+    def _seed(self, device_id, key, bucket_ts, v):
+        """Nowy akumulator; przedział zapisany wcześniej (przed restartem albo w starej agregacji)
+        jest kontynuowany, a nie nadpisywany częścią próbek."""
+        acc = [bucket_ts, v, v, v, v, 1]
+        if bucket_ts > self._seed_before:
+            return acc
+        try:
+            row = self._db.execute("SELECT avg, min, max, n FROM samples WHERE device=? AND key=? AND ts=?",
+                                   (device_id, key, bucket_ts)).fetchone()
+        except sqlite3.Error as e:
+            log.warning("Odczyt historii: %s", e)
+            row = None
+        if row and row[3] and None not in row:
+            avg, mn, mx, n = row
+            acc = [bucket_ts, avg * n + v, min(mn, v), max(mx, v), v, n + 1]
+        return acc
 
     @staticmethod
     def _row(device_id, key, acc):
@@ -110,6 +134,8 @@ class HistoryDB:
         with self._lock:
             self._flush_all()
             self._db.close()
+        with self._rlock:
+            self._rdb.close()
 
     def delete_device(self, device_id):
         with self._lock:
@@ -129,7 +155,8 @@ class HistoryDB:
             step *= 2
         with self._lock:
             self._flush_partial(device_id)
-            cur = self._db.execute(
+        with self._rlock:  # osobne połączenie: zapis próbek nie czeka na długi odczyt
+            cur = self._rdb.execute(
                 f"SELECT key, (ts / {step}) * {step} AS b, SUM(avg * n) / SUM(n) "
                 f"FROM samples WHERE device = ? AND ts >= ? AND ts <= ? "
                 f"GROUP BY key, b ORDER BY b",

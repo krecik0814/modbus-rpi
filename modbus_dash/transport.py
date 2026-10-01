@@ -20,9 +20,13 @@ Zachowanie magistrali:
 - ponowienia (retries) po timeoucie i błędzie transmisji, nie po odpowiedzi wyjątkiem;
   bezczynne połączenie TCP zerwane przez serwer dostaje jedną dodatkową próbę,
 - TCP/UDP: po błędzie nowe połączenie (gubi spóźnione odpowiedzi i martwe sesje);
-  RS-485: port zostaje otwarty, przed kolejną ramką cisza i czyszczenie wejścia,
-- odpowiedź niepasująca do zapytania (inna funkcja/długość) to błąd "io",
-- override() zmienia timeout/retries tylko dla bieżącego wątku (np. skaner),
+  RS-485: port zostaje otwarty,
+- ramki RTU/ASCII (także RTU over TCP) nie mają numerów transakcji: po timeoucie, błędzie
+  transmisji i po udanym ponowieniu przed kolejną ramką czekamy na spóźnione odpowiedzi
+  i je odrzucamy (inaczej kolejne bloki dostawałyby dane poprzednich),
+- odpowiedź niepasująca do zapytania (inna funkcja, Unit ID, długość) to błąd "io"
+  z dodatkowymi próbami po osuszeniu wejścia,
+- override() zmienia timeout/retries/settle tylko dla bieżącego wątku (np. skaner),
 - close() z innego wątku przerywa trwające zapytanie (po CLOSE_WAIT s).
 
 Logi pymodbus (ERROR przy każdym timeoucie) są wyciszane, chyba że aplikacja sama
@@ -39,6 +43,7 @@ import logging
 import math
 import os
 import re
+import select
 import socket
 import threading
 import time
@@ -49,6 +54,7 @@ log = logging.getLogger("modbus-dash.transport")
 KINDS = ("tcp", "rtu_over_tcp", "udp", "rtu", "ascii")
 NET_KINDS = ("tcp", "rtu_over_tcp", "udp")
 SERIAL_KINDS = ("rtu", "ascii")
+RTU_FRAMED = ("rtu", "ascii", "rtu_over_tcp")  # ramki bez numerów transakcji
 _KIND_ALIASES = {"serial": "rtu", "rs485": "rtu", "rs-485": "rtu", "modbus_tcp": "tcp", "socket": "tcp",
                  "rtu-over-tcp": "rtu_over_tcp", "rtuovertcp": "rtu_over_tcp", "rtu_tcp": "rtu_over_tcp"}
 _PARITY_ALIASES = {"N": "N", "NONE": "N", "E": "E", "EVEN": "E", "O": "O", "ODD": "O"}
@@ -62,7 +68,7 @@ MAX_RETRIES = 10
 MAX_DELAY_MS = 5000
 BAUD_RANGE = (300, 4_000_000)
 
-RECOVERY_GAP = 0.05     # s ciszy po timeoucie na RS-485 (spóźniona odpowiedź), potem czyszczenie wejścia
+RECOVERY_GAP = 0.05     # s ciszy kończącej odrzucanie spóźnionych odpowiedzi (ramki RTU)
 CLOSE_WAIT = 2.0        # s czekania na trwające zapytanie przy zamykaniu
 IDLE_CLOSE = 300.0      # s bezczynności, po których zamykamy połączenie
 IDLE_DROP = 3600.0      # s bezczynności, po których BusManager zapomina magistralę
@@ -174,7 +180,7 @@ class TransportConfig:
             raise ValueError(f"rodzaj połączenia musi być jednym z: {', '.join(KINDS)}")
         if self.kind in NET_KINDS:
             if not isinstance(self.host, str) or not self.host or len(self.host) > 253 \
-                    or not _HOST_RE.match(self.host):
+                    or not _HOST_RE.fullmatch(self.host):
                 raise ValueError("podaj poprawny adres hosta (IP lub nazwa)")
             if not _is_int(self.port) or not 1 <= self.port <= 65535:
                 raise ValueError("port TCP musi być w zakresie 1-65535")
@@ -182,6 +188,8 @@ class TransportConfig:
             if not isinstance(self.serial_port, str) or not self.serial_port.strip() \
                     or len(self.serial_port) > 255 or any(ch in self.serial_port for ch in "\0\r\n"):
                 raise ValueError("podaj port szeregowy (np. /dev/serial0, /dev/ttyUSB0, COM3)")
+            if "://" in self.serial_port:  # adresy URL pyserial (spy://, socket://...) są niedozwolone
+                raise ValueError("podaj ścieżkę portu szeregowego (np. /dev/ttyUSB0), nie URL")
             if not _is_int(self.baudrate) or not BAUD_RANGE[0] <= self.baudrate <= BAUD_RANGE[1]:
                 raise ValueError(f"prędkość musi być w zakresie {BAUD_RANGE[0]}-{BAUD_RANGE[1]} bit/s")
             if self.parity not in ("N", "E", "O"):
@@ -266,9 +274,11 @@ class TransportConfig:
         return f"{host}:{self.port}"
 
     def key(self):
-        """Tożsamość fizycznego łącza: ten sam port szeregowy dla RTU i ASCII to jedna magistrala."""
+        """Tożsamość fizycznego łącza: ten sam port szeregowy dla RTU i ASCII to jedna magistrala,
+        także pod inną nazwą (/dev/serial0 -> /dev/ttyAMA0, /dev/serial/by-id/... -> /dev/ttyUSB0)."""
         if self.is_serial:
-            return f"serial:{self.serial_port}"
+            port = self.serial_port
+            return f"serial:{os.path.realpath(port) if port.startswith('/') else port}"
         return f"{self.kind}:{self._hostport()}"
 
     def describe(self):
@@ -390,21 +400,31 @@ def _mismatch(message):
     return err
 
 
-def _check_response(rr, fc):
-    """Odpowiedź pymodbus -> ta sama odpowiedź albo wyjątek (ModbusError lub błąd pymodbus)."""
+def _check_response(rr, fc, unit=None):
+    """Odpowiedź pymodbus -> ta sama odpowiedź albo wyjątek (ModbusError lub błąd pymodbus).
+
+    unit: sprawdzany Unit ID odpowiedzi (ramki RTU; bramki TCP odpowiadają różnie, więc tam None).
+    """
     if isinstance(rr, BaseException):
         raise rr  # 3.6/3.7 zwracają ModbusIOException zamiast go rzucić
     if rr is None:
         raise ModbusError("io", "Błąd transmisji: brak odpowiedzi z biblioteki pymodbus")
+    # najpierw dopasowanie do zapytania (także odpowiedzi wyjątkiem: 0x80 | FC) - np. spóźniona
+    # odpowiedź na wcześniejsze zapytanie (RTU nie ma numerów transakcji)
+    got = getattr(rr, "function_code", fc)
+    if isinstance(got, int) and (got & 0x7F) != fc:
+        raise _mismatch(f"Błąd transmisji: odpowiedź FC{got & 0x7F:02d} na zapytanie FC{fc:02d}")
+    if unit is not None:
+        resp_unit = getattr(rr, "dev_id", None)
+        if resp_unit is None:
+            resp_unit = getattr(rr, "slave_id", None)
+        if _is_int(resp_unit) and resp_unit != unit:  # pymodbus 3.7 przepuszcza obce ramki
+            raise _mismatch(f"Błąd transmisji: odpowiedź od Unit ID {resp_unit} na zapytanie do Unit ID {unit}")
     if rr.isError():
         code = getattr(rr, "exception_code", None)
         if code:
             raise exception_error(int(code))
         raise ModbusError("io", f"Błąd transmisji: {rr}")
-    got = getattr(rr, "function_code", fc)
-    if isinstance(got, int) and got != fc:
-        # np. spóźniona odpowiedź na wcześniejsze zapytanie (RTU nie ma numerów transakcji)
-        raise _mismatch(f"Błąd transmisji: odpowiedź FC{got:02d} na zapytanie FC{fc:02d}")
     return rr
 
 
@@ -497,7 +517,7 @@ class Bus:
         self._previous = _previous    # poprzednia instancja dla tego łącza (musi zwolnić port)
         self._retired = False
         self._interrupted = False     # close() z innego wątku przerwał trwające zapytanie
-        self._dirty = False           # po timeoucie na RS-485: wyczyść wejście przed kolejną ramką
+        self._dirty = 0.0             # > 0: przed kolejną ramką odrzuć spóźnione odpowiedzi (maks. s czekania)
         self._spare_port = None       # otwarty port dla nowego klienta (po błędzie na RS-485)
         self._applied = None          # (timeout, id gniazda) ustawione w kliencie
         self._last_io = 0.0           # monotonic: koniec ostatniej ramki
@@ -521,7 +541,7 @@ class Bus:
         self._validate(unit, address, count, MAX_REGS, "rejestrów")
 
         def op(client, kw):
-            rr = _check_response(getattr(client, _READ_NAMES[fc])(address, count=count, **kw), fc)
+            rr = _check_response(getattr(client, _READ_NAMES[fc])(address, count=count, **kw), fc, self._ru(unit))
             regs = list(getattr(rr, "registers", None) or [])
             if len(regs) != count:
                 raise _mismatch(f"Błąd transmisji: odpowiedź ma {len(regs)} rejestrów zamiast {count}")
@@ -536,7 +556,7 @@ class Bus:
         self._validate(unit, address, count, MAX_BITS, "bitów")
 
         def op(client, kw):
-            rr = _check_response(getattr(client, _READ_NAMES[fc])(address, count=count, **kw), fc)
+            rr = _check_response(getattr(client, _READ_NAMES[fc])(address, count=count, **kw), fc, self._ru(unit))
             bits = list(getattr(rr, "bits", None) or [])
             if _pm()["bits_reversed"]:
                 bits = [b for i in range(len(bits) - 8, -1, -8) for b in bits[i:i + 8]]
@@ -551,7 +571,7 @@ class Bus:
         if not _is_int(value) or not -0x8000 <= value <= 0xFFFF:
             raise InvalidRequest("wartość rejestru musi być liczbą 0-65535 (lub -32768..-1)")
         self._execute(unit, lambda client, kw: _check_response(
-            client.write_register(address, value & 0xFFFF, **kw), 6))
+            client.write_register(address, value & 0xFFFF, **kw), 6, self._ru(unit)))
 
     def write_registers(self, unit, address, values):
         """FC16, 1..123 rejestrów."""
@@ -562,25 +582,32 @@ class Bus:
             raise InvalidRequest("wartości rejestrów muszą być liczbami 0-65535 (lub -32768..-1)")
         self._validate(unit, address, len(values), MAX_WRITE_REGS, "rejestrów")
         regs = [v & 0xFFFF for v in values]
-        self._execute(unit, lambda client, kw: _check_response(client.write_registers(address, regs, **kw), 16))
+        self._execute(unit, lambda client, kw: _check_response(
+            client.write_registers(address, regs, **kw), 16, self._ru(unit)))
 
     def write_coil(self, unit, address, value):
         """FC05."""
         self._validate(unit, address, 1, 1, "bitów")
-        self._execute(unit, lambda client, kw: _check_response(client.write_coil(address, bool(value), **kw), 5))
+        self._execute(unit, lambda client, kw: _check_response(
+            client.write_coil(address, bool(value), **kw), 5, self._ru(unit)))
 
     def ping(self, unit=None):
         """Test łącza (unit=None) albo urządzenia (odczyt 1 rejestru holding; wyjątek Modbus = żyje).
 
-        Zwraca {"ok", "error", "kind", "ms"}; nigdy nie rzuca.
+        Zwraca {"ok", "error", "kind", "ms"} (i "note" dla UDP bez Unit ID); nigdy nie rzuca.
         """
         t0 = time.monotonic()
+        note = None
         try:
             if unit in (None, ""):
                 timeout, _ = self._settings()
                 with self.lock:
                     self._check_open()
+                    if self.cfg.kind in ("tcp", "rtu_over_tcp"):
+                        self._close_client()  # prawdziwe nawiązanie połączenia, nie stare gniazdo
                     self._connect(timeout)
+                if self.cfg.kind == "udp":
+                    note = "UDP nie ma połączenia - łącze sprawdzi dopiero test z Unit ID"
             else:
                 try:
                     unit = _as_int(unit, "Unit ID musi być liczbą")
@@ -595,17 +622,26 @@ class Bus:
             return {"ok": False, "error": str(e), "kind": e.kind, "ms": _ms(t0)}
         except Exception as e:  # noqa: BLE001 - ping nigdy nie rzuca
             return {"ok": False, "error": f"Błąd: {e}", "kind": "io", "ms": _ms(t0)}
-        return {"ok": True, "error": None, "kind": None, "ms": _ms(t0)}
+        out = {"ok": True, "error": None, "kind": None, "ms": _ms(t0)}
+        if note:
+            out["note"] = note
+        return out
 
     @contextlib.contextmanager
-    def override(self, timeout=None, retries=None):
-        """Tymczasowo inny timeout / liczba ponowień - tylko dla zapytań z bieżącego wątku."""
+    def override(self, timeout=None, retries=None, settle=None):
+        """Tymczasowo inny timeout / liczba ponowień - tylko dla zapytań z bieżącego wątku.
+
+        settle: ile najwyżej czekać na spóźnione odpowiedzi po błędzie (domyślnie timeout);
+        krótsze np. przy szukaniu Unit ID, gdzie obce odpowiedzi odrzuca kontrola Unit ID.
+        """
         prev = getattr(self._local, "override", None)
         ov = dict(prev or {})
         if timeout is not None:
             ov["timeout"] = min(max(float(timeout), TIMEOUT_RANGE[0]), TIMEOUT_RANGE[1])
         if retries is not None:
             ov["retries"] = min(max(int(retries), 0), MAX_RETRIES)
+        if settle is not None:
+            ov["settle"] = min(max(float(settle), 0.0), TIMEOUT_RANGE[1])
         self._local.override = ov
         try:
             yield self
@@ -642,6 +678,15 @@ class Bus:
         ov = getattr(self._local, "override", None) or {}
         return ov.get("timeout", self.cfg.timeout), ov.get("retries", self.cfg.retries)
 
+    def _settle(self, timeout):
+        """Najdłuższe czekanie na spóźnioną odpowiedź przed kolejną ramką (ramki RTU)."""
+        ov = getattr(self._local, "override", None) or {}
+        return ov.get("settle", timeout)
+
+    def _ru(self, unit):
+        """Unit ID do sprawdzenia w odpowiedzi: tylko ramki RTU/ASCII (adres jest częścią ramki)."""
+        return unit if self.cfg.kind in RTU_FRAMED else None
+
     def _validate(self, unit, address, count, limit, what):
         # Unit 0 to broadcast w RTU (bez odpowiedzi); w TCP zwykły adres, 255 też bywa używany
         lo, hi = (0, 255) if self.cfg.kind in ("tcp", "udp") else (1, 247)
@@ -659,12 +704,13 @@ class Bus:
     def _execute(self, unit, op):
         """op(client, unit_kwargs) z ponowieniami; zwraca wynik op albo rzuca ModbusError."""
         timeout, retries = self._settings()
+        settle = self._settle(timeout)
         kw = {_pm()["unit_kw"]: unit}
         with self.lock:
             self._check_open()
             self._interrupted = False
             t_start = self._used = time.monotonic()
-            attempt, stale_retry, resyncs = 0, True, 0
+            attempt, stale_retry, resyncs, timed_out = 0, True, 0, False
             while True:
                 reused = self._is_open(self._client)
                 t0 = time.monotonic()
@@ -678,6 +724,10 @@ class Bus:
                                                                               timeout, unit)
                 else:
                     self._last_io = time.monotonic()
+                    if timed_out and self.cfg.kind in RTU_FRAMED:
+                        # ponowienie mogło odebrać spóźnioną odpowiedź na wcześniejszą próbę -
+                        # odpowiedź na samo ponowienie przyjdzie później: odrzucamy ją
+                        self._dirty = max(self._dirty, settle)
                     self._record(t_start, None, attempt)
                     return result
                 self._last_io = time.monotonic()
@@ -686,7 +736,8 @@ class Bus:
                     self._close_client()
                     self._record(t_start, err, attempt)
                     raise err
-                self._recover(err)
+                timed_out = timed_out or err.kind == "timeout"
+                self._recover(err, settle)
                 transient = err.code is None and err.kind in ("timeout", "io", "connection") \
                     and not err.connect_failed
                 if transient and reused and stale_retry and err.kind != "timeout" \
@@ -694,8 +745,8 @@ class Bus:
                     stale_retry = False  # bezczynne połączenie zerwane przez serwer - raz jeszcze, bez liczenia
                     continue
                 if getattr(err, "mismatch", False) and resyncs < 2:
-                    # spóźniona odpowiedź odczytana jako bieżąca - po wyczyszczeniu wejścia
-                    # ponawiamy bez zużywania limitu ponowień
+                    # spóźniona odpowiedź odczytana jako bieżąca - po odrzuceniu zaległych
+                    # odpowiedzi (_pace) ponawiamy bez zużywania limitu ponowień
                     resyncs += 1
                     continue
                 if (transient or err.code == 0x0B) and attempt < retries:
@@ -721,35 +772,76 @@ class Bus:
         err.detail = detail
         return err
 
-    def _recover(self, err):
+    def _recover(self, err, settle):
         if err.code is not None:
             return  # urządzenie odpowiedziało wyjątkiem - łącze sprawne
-        if self.cfg.is_serial and err.kind != "connection":
-            # RS-485: port zostaje otwarty, ale klient pymodbus jest nowy - starsze wersje
-            # trzymają resztki ramki w buforze; przed kolejną ramką cisza i czyszczenie wejścia
-            self._dirty = True
+        if self.cfg.kind in RTU_FRAMED and err.kind != "connection":
+            # ramki RTU: spóźniona odpowiedź może jeszcze przyjść (także przez przezroczystą
+            # bramkę RTU over TCP, która przekazuje bajty bieżącemu połączeniu) - przed
+            # kolejną ramką czekamy na nią i ją odrzucamy
+            self._dirty = max(self._dirty, settle)
             port = getattr(self._client, "socket", None)
-            if port is not None and getattr(port, "is_open", False):
+            keep = self.cfg.is_serial and getattr(port, "is_open", False) \
+                or getattr(err, "mismatch", False) and isinstance(port, socket.socket)
+            if keep:
+                # łącze zostaje otwarte, ale klient pymodbus jest nowy - starsze wersje
+                # trzymają resztki ramki w buforze
                 self._client, self._spare_port = None, port
                 return
         # TCP/UDP: nowe połączenie gubi spóźnione odpowiedzi i martwe sesje
         self._close_client()
 
     def _pace(self, client):
-        """Przerwa między ramkami (delay_ms) i czyszczenie wejścia po błędzie na RS-485."""
+        """Przerwa między ramkami (delay_ms) i odrzucenie spóźnionych odpowiedzi po błędzie."""
         gap = self.cfg.delay_ms / 1000.0
-        if self._dirty:
-            gap = max(gap, RECOVERY_GAP)
         wait = self._last_io + gap - time.monotonic()
         if wait > 0:
             time.sleep(wait)
         if self._dirty:
-            self._dirty = False
-            sock = getattr(client, "socket", None)
-            flush = getattr(sock, "reset_input_buffer", None) or getattr(sock, "flushInput", None)
-            if flush is not None:
-                with contextlib.suppress(Exception):
-                    flush()
+            settle, self._dirty = self._dirty, 0.0
+            self._drain(getattr(client, "socket", None), settle)
+
+    @staticmethod
+    def _drain(sock, wait):
+        """Odrzuca zaległe bajty: czeka do `wait` s na spóźnioną odpowiedź, a po każdej porcji
+        danych do RECOVERY_GAP s ciszy. Łącznie najwyżej 2*wait + 1 s (ciągły ruch na magistrali)."""
+        if sock is None:
+            return
+        if isinstance(sock, socket.socket):
+            def take(t):
+                if not select.select([sock], [], [], t)[0]:
+                    return False
+                if not sock.recv(4096):
+                    raise EOFError  # połączenie zamknięte - wykryje to kolejne zapytanie
+                return True
+        elif hasattr(sock, "in_waiting"):
+            def take(t):
+                deadline = time.monotonic() + t
+                while True:
+                    n = sock.in_waiting
+                    if n:
+                        sock.read(n)
+                        return True
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        return False
+                    time.sleep(min(0.01, left))
+        else:
+            take = None
+        start = time.monotonic()
+        end, hard = start + max(wait, RECOVERY_GAP), start + 2 * wait + 1.0
+        try:
+            while take is not None:
+                left = min(end, hard) - time.monotonic()
+                if left <= 0 or not take(left):
+                    break
+                end = time.monotonic() + RECOVERY_GAP
+        except Exception as e:  # noqa: BLE001 - błąd łącza zgłosi kolejne zapytanie
+            log.debug("odrzucanie zaległych danych: %s", e)
+        flush = getattr(sock, "reset_input_buffer", None) or getattr(sock, "flushInput", None)
+        if flush is not None:
+            with contextlib.suppress(Exception):
+                flush()
 
     @staticmethod
     def _is_open(client):
@@ -849,8 +941,10 @@ class Bus:
         if problem:
             raise _conn_error(problem)
         try:
-            ser = serial.serial_for_url(port, baudrate=c.baudrate, bytesize=c.bytesize, parity=c.parity,
-                                        stopbits=c.stopbits, timeout=timeout, exclusive=True)
+            # serial.Serial, nie serial_for_url: adresy URL pyserial (spy://...?file=) mogłyby
+            # nadpisywać pliki; TransportConfig i tak ich nie przepuszcza
+            ser = serial.Serial(port=port, baudrate=c.baudrate, bytesize=c.bytesize, parity=c.parity,
+                                stopbits=c.stopbits, timeout=timeout, exclusive=True)
         except Exception as e:  # noqa: BLE001 - pyserial rzuca różne wyjątki (także termios)
             code = getattr(e, "errno", None)
             if code in (errno.EACCES, errno.EPERM) or isinstance(e, PermissionError):
@@ -975,6 +1069,19 @@ class BusManager:
         if old is not None:
             old._retire()  # poza blokadą menedżera - może czekać na trwające zapytanie
         return bus
+
+    def retain(self, keys, grace=10.0):
+        """Zamyka magistrale spoza konfiguracji (usunięte albo zmienione łącze), żeby od razu
+        zwolniły port. Magistrale używane w ostatnich `grace` s (np. przycisk Test) zostają."""
+        keys, now, retired = set(keys), time.monotonic(), []
+        with self._lock:
+            for key, bus in list(self._buses.items()):
+                if key not in keys and now - bus._used >= grace:
+                    del self._buses[key]
+                    retired.append(bus)
+        for bus in retired:
+            bus._retire()
+        return len(retired)
 
     def _reap(self, keep):
         """Zamyka długo nieużywane połączenia i zapomina porzucone magistrale."""

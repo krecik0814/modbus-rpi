@@ -440,6 +440,12 @@ function mqttCard(ctx, life) {
     if (!password || passClear.input.checked) {
       password = saved && saved.password === MASK && !passClear.input.checked ? MASK : '';
     }
+    const moved = saved && (hostV !== saved.host || portV !== saved.port
+      || user.value.trim() !== (saved.username || '') || tls.input.checked !== !!saved.tls);
+    if (password === MASK && moved) {
+      // serwer nie wyśle zapisanego hasła do innego brokera ani dla innego konta
+      errs.push([pass, 'Zmieniono brokera, konto albo TLS - wpisz hasło ponownie (albo zaznacz „Usuń zapisane hasło”)']);
+    }
     return {
       errs,
       body: {
@@ -449,7 +455,7 @@ function mqttCard(ctx, life) {
     };
   }
 
-  const SERVER_FIELDS = [[/port/i, port], [/interwa/i, interval], [/prefiks/i, prefix]];
+  const SERVER_FIELDS = [[/port/i, port], [/interwa/i, interval], [/prefiks/i, prefix], [/hasło/i, pass]];
 
   async function save() {
     if (!saved) return;

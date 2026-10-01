@@ -722,3 +722,206 @@ def test_mini_uart_parity_is_reported(monkeypatch, tmp_path):
     msg = T._mini_uart_problem("/dev/serial0", cfg)
     assert msg and "disable-bt" in msg and "8E1" in msg
     assert T._mini_uart_problem("/dev/serial0", TransportConfig(kind="rtu", serial_port="/dev/serial0")) is None
+
+
+# ── regresje: dopasowanie odpowiedzi RTU ──────────────────────
+class RtuGateway:
+    """Przezroczysta bramka RTU over TCP (jak USR/Elfin): licznik odpowiada po kolei,
+    a bajty z RS-485 trafiają do wszystkich podłączonych klientów.
+
+    answer(frame, n) -> (opóźnienie s, bajty odpowiedzi albo None); n = numer zapytania od 1.
+    """
+
+    def __init__(self, answer):
+        import queue
+        self.answer = answer
+        self.ls = socket.socket()
+        self.ls.bind(("127.0.0.1", 0))
+        self.ls.listen(4)
+        self.address = self.ls.getsockname()
+        self.clients, self.q, self.n = [], queue.Queue(), 0
+        threading.Thread(target=self._accept, daemon=True).start()
+        threading.Thread(target=self._meter, daemon=True).start()
+
+    def _accept(self):
+        while True:
+            try:
+                c, _ = self.ls.accept()
+            except OSError:
+                return
+            self.clients.append(c)
+            threading.Thread(target=self._serve, args=(c,), daemon=True).start()
+
+    def _serve(self, c):
+        while True:
+            try:
+                d = c.recv(256)
+            except OSError:
+                d = b""
+            if not d:
+                if c in self.clients:
+                    self.clients.remove(c)
+                return
+            self.q.put(d)
+
+    def _meter(self):
+        while True:
+            frame = self.q.get()
+            if frame is None:
+                return
+            self.n += 1
+            delay, out = self.answer(frame, self.n)
+            time.sleep(delay)
+            for c in list(self.clients) if out else ():
+                with __import__("contextlib").suppress(OSError):
+                    c.sendall(out)
+
+    def close(self):
+        self.q.put(None)
+        self.ls.close()
+        for c in list(self.clients):
+            c.close()
+
+
+def _echo_regs(frame, unit=None):
+    """Odpowiedź FC03/04, w której rejestr = własny adres (przesunięcie bloków od razu widać)."""
+    fc = frame[1]
+    addr, cnt = struct.unpack(">HH", frame[2:6])
+    regs = struct.pack(f">{cnt}H", *[(addr + i) & 0xFFFF for i in range(cnt)])
+    return S.add_crc(bytes([frame[0] if unit is None else unit, fc, 2 * cnt]) + regs)
+
+
+def gw_bus(gw, **kw):
+    host, port = gw.address
+    return Bus(TransportConfig(kind="rtu_over_tcp", host=host, port=port, **kw))
+
+
+def test_rtu_late_answer_after_retry_does_not_shift_blocks():
+    # pierwsza odpowiedź spóźniona ponad timeout: ponowienie dostaje odpowiedź na pierwszą próbę,
+    # a odpowiedź na samo ponowienie musi zostać odrzucona - inaczej kolejne bloki o tej samej
+    # funkcji i długości dostają dane poprzednich
+    gw = RtuGateway(lambda f, n: (0.45 if n == 1 else 0.02, _echo_regs(f)))
+    bus = gw_bus(gw, timeout=0.3, retries=1)
+    try:
+        for _ in range(3):
+            for start in (0, 100, 200):
+                assert bus.read_registers(1, "input", start, 4) == [start + i for i in range(4)]
+        assert bus.stats()["errors"] == 0
+    finally:
+        bus.close()
+        gw.close()
+
+
+def test_rtu_late_answer_after_final_timeout_is_drained():
+    gw = RtuGateway(lambda f, n: (0.5 if n == 1 else 0.02, _echo_regs(f)))
+    bus = gw_bus(gw, timeout=0.3, retries=0)
+    try:
+        with pytest.raises(ModbusError) as e:
+            bus.read_registers(1, "input", 0, 4)
+        assert e.value.kind == "timeout"
+        for start in (100, 200, 300):
+            assert bus.read_registers(1, "input", start, 4) == [start + i for i in range(4)]
+    finally:
+        bus.close()
+        gw.close()
+
+
+def test_exception_with_other_function_code_is_a_mismatch():
+    # spóźniona odpowiedź wyjątkiem na FC04 nie może być wynikiem zapytania FC03
+    def answer(frame, n):
+        if frame[1] == 4 or n <= 3:
+            return 0.0, S.add_crc(bytes([frame[0], 0x84, 0x02]))
+        return 0.0, _echo_regs(frame)
+    gw = RtuGateway(answer)
+    bus = gw_bus(gw, timeout=0.3, retries=0)
+    try:
+        with pytest.raises(ModbusError) as e:
+            bus.read_registers(1, "holding", 0, 2)
+        assert e.value.kind == "io" and "FC04" in str(e.value) and e.value.code is None
+        assert bus.read_registers(1, "holding", 10, 2) == [10, 11]
+        with pytest.raises(ModbusError) as e:
+            bus.read_registers(1, "input", 0, 2)
+        assert (e.value.kind, e.value.code) == ("exception", 2)
+    finally:
+        bus.close()
+        gw.close()
+
+
+def test_answer_from_other_unit_is_rejected():
+    # pymodbus 3.7 przepuszcza ramki od innego Unit ID; nowsze je odrzucają albo pomijają
+    gw = RtuGateway(lambda f, n: (0.0, _echo_regs(f, unit=f[0] + 1)))
+    bus = gw_bus(gw, timeout=0.3, retries=0)
+    try:
+        with pytest.raises(ModbusError) as e:
+            bus.read_registers(5, "input", 0, 2)
+        assert e.value.kind in ("io", "timeout")
+    finally:
+        bus.close()
+        gw.close()
+    assert T._check_response(type("R", (), {"function_code": 3, "dev_id": 2, "isError": lambda s: False})(),
+                             3) is not None  # TCP: Unit ID nie jest sprawdzany
+    with pytest.raises(ModbusError) as e:
+        T._check_response(type("R", (), {"function_code": 3, "slave_id": 6, "isError": lambda s: False})(), 3, 5)
+    assert e.value.mismatch and "Unit ID 6" in str(e.value)
+
+
+def test_serial_url_is_rejected(tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("dane")
+    for url in (f"spy://loop://?file={victim}", "socket://127.0.0.1:1", "loop://"):
+        with pytest.raises(ValueError) as e:
+            TransportConfig.from_dict({"kind": "rtu", "serial_port": url})
+        assert "nie URL" in str(e.value)
+    assert victim.read_text() == "dane"
+
+
+@linux_pty
+def test_serial_alias_is_the_same_bus(pty_pair, tmp_path):
+    master, path = pty_pair
+    srv = S.SerialSimServer(master)
+    srv.add_device(make_device(1))
+    srv.start()
+    alias = tmp_path / "by-id-adapter"
+    alias.symlink_to(path)
+    mgr = BusManager()
+    try:
+        a = mgr.get(TransportConfig(kind="rtu", serial_port=path, baudrate=38400, timeout=0.3))
+        assert a.read_registers(1, "input", 0, 2) == EXPECTED[:2]
+        b = mgr.get(TransportConfig(kind="rtu", serial_port=str(alias), baudrate=38400, timeout=0.3))
+        assert b is not a and a._retired  # ta sama tożsamość łącza - stara instancja zwalnia port
+        assert b.read_registers(1, "input", 0, 2) == EXPECTED[:2]
+        assert len(mgr.snapshot()) == 1
+    finally:
+        mgr.close_all()
+        srv.stop()
+
+
+def test_bus_manager_retain(server):
+    mgr = BusManager()
+    host, port = server.address
+    keep = mgr.get(TransportConfig(host=host, port=port))
+    gone = mgr.get(TransportConfig(kind="rtu_over_tcp", host=host, port=port))
+    keep.read_registers(1, "input", 0, 2)
+    assert mgr.retain([keep.cfg.key()]) == 0  # świeżo używane zostają (przycisk Test)
+    assert mgr.retain([keep.cfg.key()], grace=0) == 1
+    assert gone._retired and not keep._retired and keep.connected
+    mgr.close_all()
+
+
+def test_ping_without_unit_really_connects():
+    srv = S.SimServer("127.0.0.1", 0, "tcp")
+    srv.add_device(make_device(1))
+    srv.start()
+    bus = tcp_bus(srv, timeout=0.3, retries=0)
+    try:
+        assert bus.read_registers(1, "input", 0, 2) == EXPECTED[:2]
+        srv.stop()
+        time.sleep(0.05)
+        res = bus.ping()
+        assert not res["ok"] and res["kind"] == "connection"
+    finally:
+        bus.close()
+    udp = Bus(TransportConfig(kind="udp", host="127.0.0.1", port=_free_port(), timeout=0.2))
+    res = udp.ping()
+    assert res["ok"] and "Unit ID" in res["note"]
+    udp.close()

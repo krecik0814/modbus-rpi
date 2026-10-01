@@ -756,8 +756,10 @@ export function mount(root, ctx) {
     if (!rows.length) { toast('Brak rozpoznanych rejestrów - nie ma z czego utworzyć presetu', 'err'); return; }
     const counts = {};
     for (const r of rows) counts[r.hint.byte_order] = (counts[r.hint.byte_order] || 0) + 1;
-    const best = ORDERS.reduce((b, o) => ((counts[o] || 0) > (counts[b] || 0) ? o : b), 'ABCD');
-    const orderSel = select(ORDERS.map((o) => [o, `${ORDER_LABELS[o]} - ${counts[o] || 0} ${plural(counts[o] || 0, 'podpowiedź', 'podpowiedzi', 'podpowiedzi')}`]), best);
+    // domyślnie decyduje serwer: głosy wszystkich wierszy razem z wyrównaniem adresów 32-bit
+    // (przy skanie co 1 rejestr samo liczenie podpowiedzi myli ABCD z CDAB "na zakładkę")
+    const orderSel = select([['', 'Automatycznie (zalecane)'],
+      ...ORDERS.map((o) => [o, `${ORDER_LABELS[o]} - ${counts[o] || 0} ${plural(counts[o] || 0, 'podpowiedź', 'podpowiedzi', 'podpowiedzi')}`])], '');
     const nameIn = h('input', { type: 'text', maxlength: 80, autocomplete: 'off', placeholder: 'np. Licznik w garażu' });
     const errBox = h('ul', { class: 'errors', role: 'alert' });
     const req = last.req;
@@ -767,7 +769,7 @@ export function mount(root, ctx) {
       title: 'Utwórz preset ze skanu',
       subtitle: `${rows.length} ${plural(rows.length, 'rozpoznany rejestr', 'rozpoznane rejestry', 'rozpoznanych rejestrów')}. Szkic otworzy się w edytorze presetów - nic nie zostanie zapisane bez Twojej zgody.`,
       body: [h('div', { class: 'grid' },
-        field('Kolejność bajtów', orderSel, 'domyślnie najczęstsza wśród podpowiedzi'),
+        field('Kolejność bajtów', orderSel, 'automatycznie: wg wszystkich wierszy i wyrównania adresów'),
         field('Nazwa (opcjonalnie)', nameIn)), errBox],
       actions: [{ label: 'Anuluj' }, { label: 'Utwórz szkic', class: 'btn-primary', onClick: (close) => submit(close) }],
       onClose: () => {
@@ -791,7 +793,8 @@ export function mount(root, ctx) {
       try {
         const name = nameIn.value.trim();
         const preset = await post('/api/scan/preset', {
-          registers: rows, byte_order: orderSel.value, register_type: req.register_type, name: name || undefined,
+          registers: rows, byte_order: orderSel.value || undefined, register_type: req.register_type,
+          name: name || undefined,
         }, { signal: ctl.signal });
         ctl = null;
         close();

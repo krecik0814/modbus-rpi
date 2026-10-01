@@ -16,6 +16,7 @@ ExecStart=/home/pi/modbus-rpi/.venv/bin/python app.py --serial /dev/serial0 --ba
 Restart=on-failure
 RestartSec=5
 # Hasło do dashboardu (opcjonalnie): Environment=MODBUS_DASH_AUTH=admin:zmien-mnie
+# Własna nazwa hosta panelu bez hasła (np. wpis w DNS): Environment=MODBUS_DASH_ALLOWED_HOSTS=energia.lan
 Environment=PYTHONUNBUFFERED=1
 
 [Install]

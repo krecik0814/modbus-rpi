@@ -34,18 +34,27 @@ class DeviceRuntime:
         self.last_ok_ts = None
         self.lock = threading.Lock()
 
-    def set_preset(self, preset, reader_factory):
-        """Ustawia (nowy) preset; czyści historię gdy zmienił się zestaw rejestrów."""
-        if preset == self.preset:
-            return
-        keys = list(preset["registers"]) if preset else []
+    def set_preset(self, preset, reader_factory, keep=False):
+        """Ustawia (nowy) preset; czyści historię, gdy zmienił się zestaw rejestrów.
+
+        preset None + keep=True (plik presetu chwilowo niepoprawny albo usunięty): odczyt
+        wstrzymany, ale ostatni dobry preset (metadane) i historia zostają.
+        Zwraca True, gdy coś się zmieniło (preset albo wstrzymanie odczytu).
+        """
         with self.lock:
+            if preset is None and keep and self.preset is not None:
+                changed, self.reader = self.reader is not None, None
+                return changed
+            if preset == self.preset and (preset is None or self.reader is not None):
+                return False
+            keys = list(preset["registers"]) if preset else []
             self.preset = preset
             self.reader = reader_factory(preset) if preset else None
             if keys != self.keys:
                 self.keys = keys
                 self.history.clear()
                 self.latest = None
+            return True
 
     def record(self, sample):
         with self.lock:
@@ -68,6 +77,7 @@ class Poller:
         self.reader_factory = reader_factory
         self.TransportConfig = transport_config_cls
         self.listeners = []
+        self.preset_listeners = []  # fn(device_id) - zmiana presetu urządzenia (np. discovery HA)
         self._lock = threading.RLock()
         self._devices = {}          # id -> DeviceRuntime
         self._workers = {}          # bus id -> (thread, stop_event, wake_event)
@@ -99,10 +109,23 @@ class Poller:
         except ValueError:
             pass
 
+    def add_preset_listener(self, fn):
+        """fn(device_id) - preset urządzenia się zmienił albo przestał się wczytywać."""
+        self.preset_listeners.append(fn)
+
+    def _notify_preset(self, dev_ids):
+        for dev_id in dev_ids:
+            for fn in list(self.preset_listeners):
+                try:
+                    fn(dev_id)
+                except Exception:  # noqa: BLE001
+                    log.exception("Listener zmiany presetu")
+
     def reload(self, *_):
         """Synchronizuje urządzenia i wątki z bieżącą konfiguracją."""
         cfg = self.config.get()
-        points = cfg["history"]["memory_points"]
+        points = int(cfg["history"]["memory_points"])
+        changed = []
         with self._lock:
             for dev_id in list(self._devices):
                 if dev_id not in cfg["devices"]:
@@ -115,7 +138,14 @@ class Poller:
                 else:
                     rt.cfg = dcfg
                     rt.next_due = 0.0
-                self._refresh_preset(rt)
+                if self._refresh_preset(rt):
+                    changed.append(dev_id)
+            self._start_workers(cfg)
+        # poza blokadą: słuchacze (MQTT) sami pytają poller o dane
+        self._notify_preset(changed)
+
+    def _start_workers(self, cfg):
+        with self._lock:
             if not self._running:
                 return
             wanted = {d["bus"] for d in cfg["devices"].values() if d["enabled"]}
@@ -135,19 +165,23 @@ class Poller:
                 th.start()
 
     def _refresh_preset(self, rt):
+        """Wczytuje preset urządzenia; True = zmiana (trzeba powiadomić słuchaczy)."""
         pid = rt.cfg.get("preset")
         if not pid:
             rt.preset_error = None
-            rt.set_preset(None, self.reader_factory)
-            return
+            return rt.set_preset(None, self.reader_factory)
         try:
             preset = self.presets.get(pid)
             rt.preset_error = None if preset else f"preset '{pid}' nie istnieje"
         except PresetError as e:
             preset, rt.preset_error = None, f"preset '{pid}' jest niepoprawny: {e}"
-        except (OSError, ValueError) as e:
+        except Exception as e:  # noqa: BLE001 - zły plik użytkownika nie może zatrzymać odpytywania
             preset, rt.preset_error = None, f"nie można wczytać presetu '{pid}': {e}"
-        rt.set_preset(preset, self.reader_factory)
+        try:
+            return rt.set_preset(preset, self.reader_factory, keep=True)
+        except Exception as e:  # noqa: BLE001 - np. błąd planowania odczytów
+            rt.preset_error = f"preset '{pid}': {e}"
+            return rt.set_preset(None, self.reader_factory, keep=True)
 
     # ── pętla odpytywania ──────────────────────────────────────
     def _bus_for(self, bus_id):
@@ -166,8 +200,7 @@ class Poller:
                         if rt.cfg["bus"] == bus_id and rt.cfg["enabled"]]
             if now - last_preset_check > 2.0:
                 # wykrywa edycję pliku presetu (cache w PresetStore po mtime)
-                for rt in devs:
-                    self._refresh_preset(rt)
+                self._notify_preset([rt.id for rt in devs if self._refresh_preset(rt)])
                 last_preset_check = now
             due = [rt for rt in devs if rt.reader and rt.next_due <= now]
             for rt in sorted(due, key=lambda r: r.next_due):
@@ -208,7 +241,8 @@ class Poller:
         rt.record(sample)
         interval = rt.cfg["interval"]
         if not sample["ok"] and rt.fail_count > 1:
-            interval = min(MAX_BACKOFF, interval * 2 ** min(rt.fail_count - 1, 5))
+            # rzadziej przy powtarzających się błędach (do MAX_BACKOFF), ale nigdy częściej niż interwał
+            interval = max(interval, min(MAX_BACKOFF, interval * 2 ** min(rt.fail_count - 1, 5)))
         rt.next_due = max(started + interval, time.monotonic() + 0.05)
         for fn in list(self.listeners):
             try:
@@ -230,7 +264,8 @@ class Poller:
         rt = self.runtime(dev_id)
         if rt is None:
             return None
-        self._refresh_preset(rt)
+        if self._refresh_preset(rt):
+            self._notify_preset([rt.id])
         return self.poll(rt)
 
     def status(self, rt):

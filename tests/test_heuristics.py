@@ -411,3 +411,75 @@ def test_plausibility_uses_units_for_custom_keys():
     assert H.plausibility({**good, "ul": 230.0}, preset) < 1.0          # międzyfazowe 230 V - USA, mniej pewne
     assert H.plausibility({**good, "e": -5.0}, preset) < 1.0
     assert H.plausibility({"x": 12.0}, preset) == 0.5                   # nieznana wielkość
+
+
+# ── regresje z przeglądu ──────────────────────────────────────
+def _image_rows(values, order, start, end, step=1):
+    regs = [0] * (end - start)
+    for a, v in values.items():
+        for i, r in enumerate(codec.encode(v, "float32", order)):
+            if start <= a + i < end:
+                regs[a + i - start] = r
+    return [r for r in H.analyze_registers(start, regs, step=step) if r["hint"]]
+
+
+@pytest.mark.parametrize("order,parity", [("ABCD", 1), ("CDAB", 0), ("ABCD", 0), ("CDAB", 1)])
+def test_step1_scan_picks_real_alignment(order, parity):
+    base = {0: 230.1, 2: 229.5, 4: 231.2, 6: 2.5, 8: 1.8, 10: 3.2, 12: 546.5, 14: 50.01,
+            20: 12345.6, 22: 0.95, 24: 0.93}
+    vals = {a + parity: v for a, v in base.items()}
+    rows = _image_rows(vals, order, 0, 40)
+    d = H.suggest_preset(rows)
+    wide = {(s["address"], s.get("byte_order", d["byte_order"])) for s in d["registers"].values()
+            if s.get("type", d["data_type"]) == "float32"}
+    assert wide <= {(a, order) for a in vals}, (d["byte_order"], sorted(wide))
+    assert len(wide) >= len(vals) - 1
+
+
+def test_ambiguous_alignment_is_reported_and_alternative_can_be_forced():
+    vals = {a: 200.0 + a * 1.37 for a in range(0, 60, 2)}
+    rows = _image_rows(vals, "ABCD", 0, 60)
+    d = H.suggest_preset(rows)
+    assert d["byte_order"] == "ABCD" and d["_warnings"] and "UWAGA" in d["description"]
+    assert d["_alternative"] == {"byte_order": "CDAB", "alignment": "odd"}
+    alt = H.suggest_preset(rows, byte_order="CDAB", alignment="odd")
+    assert all(s["address"] % 2 == 1 for s in alt["registers"].values()) and "_warnings" not in alt
+    with pytest.raises(PresetError):
+        H.suggest_preset(rows, alignment="środek")
+
+
+def test_integer_meter_is_not_swapped_by_one_lucky_float():
+    # rejestry 16-bit nie mogą przegrać z jednym przypadkowym "ładnym" floatem BADC
+    rows = []
+    for a, v in ((0, 2301), (1, 2295), (2, 2312), (3, 5001), (4, 125), (5, 98)):
+        rows += H.analyze_registers(a, [v, 0], step=2)[:1]
+    rows += H.analyze_registers(10, [0x0043, 0x0025], step=2)
+    rows = [r for r in rows if r["hint"]]
+    d = H.suggest_preset(rows)
+    assert d["byte_order"] == "ABCD"
+
+
+def test_suggest_preset_skips_malformed_hints():
+    good = {"address": 0, "raw": [17254, 0], "hint": {"guess": "voltage", "type": "float32",
+                                                       "byte_order": "ABCD", "score": 0.9, "value": 230}}
+    bad = [{**good, "hint": {**good["hint"], **h}} for h in (
+        {"score": "x"}, {"guess": []}, {"scale": float("nan")}, {"score": True}, {"alternatives": [{"guess": {}}]})]
+    d = H.suggest_preset([good] + [{**r, "address": 10 + 2 * i} for i, r in enumerate(bad)])
+    # wiersz 18 ma poprawną podpowiedź - pomijana jest tylko zepsuta alternatywa
+    assert [s["address"] for s in d["registers"].values()] == [0, 18]
+
+
+def test_dc_meter_detected_at_battery_voltage():
+    p = normalize_preset(json.load(open(H.__file__.replace("modbus_dash/heuristics.py",
+                                                           "presets/library/peacefair_pzem_017.json"))))
+    q = normalize_preset(json.load(open(H.__file__.replace("modbus_dash/heuristics.py",
+                                                           "presets/library/peacefair_pzem_004t.json"))))
+    for volts in (12.8, 26.4, 53.0, 150.0):
+        regs = {0: round(volts * 100), 1: 320, 2: round(volts * 3.2 * 10)}
+        def read(preset, regs=regs):
+            values = {}
+            for k, s in preset["registers"].items():
+                chunk = [regs.get(s["address"] + i, 0) for i in range(s["count"])]
+                values[k] = decode_value(s, chunk)
+            return values
+        assert H.plausibility(read(p), p) > H.plausibility(read(q), q), volts

@@ -42,6 +42,11 @@ def parse_args(argv=None):
     g.add_argument("--auth", default=os.environ.get("MODBUS_DASH_AUTH"), metavar="USER:HASŁO",
                    help="włącz logowanie HTTP Basic (lub zmienna MODBUS_DASH_AUTH)")
     g.add_argument("--allow-write", action="store_true", help="zezwól na zapis rejestrów/cewek z interfejsu")
+    g.add_argument("--allowed-host", action="append", metavar="NAZWA",
+                   default=[h.strip() for h in os.environ.get("MODBUS_DASH_ALLOWED_HOSTS", "").split(",") if h.strip()],
+                   help="dodatkowa nazwa hosta, pod którą otwierasz dashboard bez --auth (np. energia.lan, "
+                        "*.home.lan; można powtarzać; zmienna MODBUS_DASH_ALLOWED_HOSTS) - adresy IP, localhost "
+                        "i nazwa tego komputera są zawsze dozwolone")
     g.add_argument("--data-dir", default=str(BASE_DIR / "data"), help="katalog na konfigurację i historię")
     g.add_argument("--presets-dir", default=str(BASE_DIR / "presets"), help="katalog presetów użytkownika")
     g.add_argument("--no-history", action="store_true", help="nie zapisuj historii w SQLite")
@@ -86,12 +91,51 @@ def parse_args(argv=None):
         p.error("podaj tylko jedno z: --serial, --tcp, --rtu-over-tcp")
     if (args.serial or args.tcp or args.rtu_over_tcp) and not args.sim:
         args.no_sim = True  # jak w poprzednich wersjach: prawdziwe urządzenie = bez symulatora
+    for opt in ("tcp", "rtu_over_tcp"):
+        if getattr(args, opt):
+            try:
+                _host_port(getattr(args, opt))
+            except ValueError as e:
+                p.error(f"--{opt.replace('_', '-')}: {e}")
+    for spec in args.sim_preset:
+        try:
+            _sim_spec(spec)
+        except ValueError as e:
+            p.error(f"--sim-preset: {e}")
     return args
 
 
 def _host_port(value, default_port=502):
-    host, _, port = value.rpartition(":") if value.count(":") == 1 else (value, "", "")
-    return (host or value), int(port) if port else default_port
+    """"host", "host:port", "[IPv6]" albo "[IPv6]:port" -> (host, port). Rzuca ValueError."""
+    value = value.strip()
+    if value.startswith("[") and "]" in value:
+        host, _, rest = value[1:].partition("]")
+        if rest and not rest.startswith(":"):
+            raise ValueError(f"niepoprawny adres '{value}' (użyj [IPv6]:PORT)")
+        port = rest[1:]
+    elif value.count(":") == 1:
+        host, _, port = value.partition(":")
+    else:
+        host, port = value, ""
+    if not host:
+        raise ValueError(f"brak hosta w '{value}'")
+    if not port:
+        return host, default_port
+    if not port.isdigit() or not 1 <= int(port) <= 65535:
+        raise ValueError(f"niepoprawny port w '{value}' (1-65535)")
+    return host, int(port)
+
+
+def _sim_spec(spec):
+    """"preset[:unit]" -> (preset, unit). Rzuca ValueError."""
+    pid, _, unit = spec.partition(":")
+    if not pid:
+        raise ValueError(f"brak id presetu w '{spec}'")
+    if not unit:
+        return pid, 2
+    if not unit.isdigit() or not 1 <= int(unit) <= 247:
+        raise ValueError(f"niepoprawny Unit ID w '{spec}' (1-247)")
+    return pid, int(unit)
 
 
 def build_overrides(args):
@@ -112,8 +156,7 @@ def build_overrides(args):
         devices["symulator"] = {"name": "Symulator 3F", "bus": "sim", "unit": 1,
                                 "preset": "simulator_3f", "interval": 1.0}
         for spec in args.sim_preset:
-            pid, _, unit = spec.partition(":")
-            unit = int(unit) if unit else 2
+            pid, unit = _sim_spec(spec)
             devices[f"sym-{unit}"] = {"name": f"Symulator {pid} #{unit}", "bus": "sim", "unit": unit,
                                       "preset": pid, "interval": 1.0}
     if args.preset:
@@ -142,6 +185,7 @@ class AppContext:
             "auth": tuple(args.auth.split(":", 1)) if args.auth else None,
             "allow_write": args.allow_write,
             "allow_any_host": True,
+            "allowed_hosts": list(getattr(args, "allowed_host", None) or []),
             "no_history": args.no_history,
         }
         self.presets = PresetStore(Path(args.presets_dir), BASE_DIR / "presets" / "library")
@@ -155,6 +199,7 @@ class AppContext:
         self._apply_history()
         self.mqtt = MqttPublisher(self.config, self.poller)
         self.poller.add_listener(self.mqtt.on_sample)
+        self.poller.add_preset_listener(self.mqtt.on_preset_change)  # discovery HA po edycji presetu
         self.config.on_change(self._on_config_change)
         self.simulator = None
         self.simulator_info = None
@@ -180,17 +225,27 @@ class AppContext:
             self._apply_history()
         if section in ("buses", "devices", "history"):
             self.poller.reload()
+        if section == "buses":
+            self._retain_buses()
         if section in ("mqtt", "devices"):
             self.mqtt.apply()
+
+    def _retain_buses(self):
+        """Usunięta albo zmieniona magistrala od razu zwalnia port (nie po 5 min bezczynności)."""
+        from modbus_dash.transport import TransportConfig
+        keys = []
+        for cfg in self.config.get()["buses"].values():
+            try:
+                keys.append(TransportConfig.from_dict(cfg).key())
+            except ValueError:
+                continue
+        self.buses.retain(keys)
 
     def _start_simulator(self, args):
         from modbus_dash.presets import PresetError
         from modbus_dash.simulator import Simulator
         sim = Simulator(host="0.0.0.0", port=args.modbus_port, framing=args.sim_framing)
-        units = [("simulator_3f", 1)]
-        for spec in args.sim_preset:
-            pid, _, unit = spec.partition(":")
-            units.append((pid, int(unit) if unit else 2))
+        units = [("simulator_3f", 1)] + [_sim_spec(spec) for spec in args.sim_preset]
         loaded = []
         for pid, unit in units:
             try:
@@ -203,7 +258,13 @@ class AppContext:
                 continue
             sim.add_preset(unit, preset, strict=args.sim_strict)
             loaded.append({"unit": unit, "preset": pid})
-        sim.start()
+        try:
+            sim.start()
+        except OSError as e:
+            log.error("Symulator: nie można nasłuchiwać na porcie %s: %s (użyj --modbus-port albo --no-sim)",
+                      args.modbus_port, e)
+            sim.stop()
+            return
         self.simulator = sim
         self.simulator_info = {"port": args.modbus_port, "framing": args.sim_framing, "devices": loaded}
         log.info("Symulator Modbus %s na porcie %s (urządzenia: %s)", args.sim_framing.upper(), args.modbus_port,
@@ -234,8 +295,13 @@ def main(argv=None):
         log.warning("--debug włącza debugger Werkzeug (wykonanie kodu!) - nasłuch ograniczony do 127.0.0.1")
         args.host = "127.0.0.1"
 
+    from modbus_dash.config import ConfigError
     from modbus_dash.web import create_app
-    ctx = AppContext(args)
+    try:
+        ctx = AppContext(args)
+    except (ConfigError, ValueError) as e:
+        log.error("Błąd konfiguracji: %s", e)
+        return 2
     app = create_app(ctx)
     ctx.start()
 
@@ -255,7 +321,10 @@ def main(argv=None):
         except ImportError:
             app.run(host=args.host, port=args.port, debug=args.debug, use_reloader=False, threaded=True)
         else:
-            serve(app, host=args.host, port=args.port, threads=8, ident="modbus-dash")
+            # limit rozmiaru zapytania już w waitress: bez niego buforuje do 1 GB na dysku,
+            # zanim Flask sprawdzi logowanie i MAX_CONTENT_LENGTH
+            serve(app, host=args.host, port=args.port, threads=8, ident="modbus-dash",
+                  max_request_body_size=app.config["MAX_CONTENT_LENGTH"], connection_limit=20)
     except KeyboardInterrupt:
         pass
     finally:

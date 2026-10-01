@@ -320,3 +320,143 @@ def test_scale_from_validation_and_missing_source():
     bus.put("input", 0, [100])
     res = PresetReader(p).read(bus, 1)
     assert res["values"]["a"] is None and "skali" in res["errors"]["a"]
+
+
+# ── regresje z przeglądu ──────────────────────────────────────
+class _ExcBus(FakeBus):
+    """Odpowiada wyjątkiem o danym kodzie (raz albo zawsze)."""
+
+    def __init__(self, code, polls=None, **kw):
+        super().__init__(**kw)
+        self.code, self.polls = code, polls
+
+    def read_registers(self, unit, function, address, count):
+        from conftest import FakeModbusError
+        if self.polls is None or self.polls > 0:
+            self.calls.append((unit, function, address, count))
+            raise FakeModbusError("exception", self.code, f"Wyjątek Modbus {self.code:02X}")
+        return super().read_registers(unit, function, address, count)
+
+
+def test_reader_does_not_split_on_busy():
+    p = _preset({k: {"address": a} for k, a in (("a", 0), ("b", 2), ("c", 4), ("d", 6))})
+    bus = _ExcBus(0x06, polls=1)
+    for a in (0, 2, 4, 6):
+        bus.put("input", a, codec.encode(float(a), "float32"))
+    reader = PresetReader(p)
+    res = reader.read(bus, 1)
+    assert not res["ok"] and res["requests"] == 1 and len(reader.blocks) == 1
+    bus.polls = 0
+    res = reader.read(bus, 1)
+    assert res["ok"] and res["requests"] == 1 and res["values"]["d"] == 6.0
+
+
+def test_reader_keeps_block_when_split_does_not_help():
+    p = _preset({k: {"address": a} for k, a in (("a", 0), ("b", 2), ("c", 4), ("d", 6))})
+    bus = _ExcBus(0x04)
+    reader = PresetReader(p)
+    reader.read(bus, 1)
+    assert len(reader.blocks) == 1 and reader.blocks[0].rejected
+    bus.calls.clear()
+    res = reader.read(bus, 1)
+    assert res["requests"] == 1 and len(bus.calls) == 1 and set(res["errors"]) == {"a", "b", "c", "d"}
+
+
+def test_reader_replans_periodically(monkeypatch):
+    from modbus_dash import planner
+    p = _preset({"a": {"address": 0}, "b": {"address": 10}, "c": {"address": 20}})
+    bus = FakeBus(strict=True)
+    for a in (0, 10, 20):
+        bus.put("input", a, codec.encode(float(a), "float32"))
+    reader = PresetReader(p)
+    reader.read(bus, 1)
+    assert len(reader.blocks) == 3
+    for a in range(0, 22):  # licznik "naprawiony": cały zakres czytelny
+        bus.image.setdefault(("input", a), 0)
+    monkeypatch.setattr(planner, "REPLAN_SECONDS", 0.0)
+    reader.read(bus, 1)
+    assert len(reader.blocks) == 1
+
+
+def test_scale_from_multiply_uses_exact_value():
+    p = _preset({
+        "current_l1": {"address": 0, "type": "int16", "scale": 0.01, "scale_from": "ct_ratio",
+                       "scale_from_mode": "multiply"},
+        "ct_ratio": {"address": 10, "decimals": 0},
+        "power": {"address": 1, "type": "int16", "scale_from": "fine", "scale_from_mode": "multiply"},
+        "fine": {"address": 12},
+    })
+    bus = FakeBus(strict=False)
+    bus.put("input", 0, codec.encode(1000, "int16"))
+    bus.put("input", 1, codec.encode(10, "int16"))
+    bus.put("input", 10, codec.encode(2.5, "float32"))
+    bus.put("input", 12, codec.encode(0.125, "float32"))
+    res = PresetReader(p).read(bus, 1)
+    assert res["values"]["current_l1"] == 25.0 and res["values"]["ct_ratio"] == 2.0
+    assert res["values"]["power"] == 1.25 and res["values"]["fine"] == 0.12
+
+
+def test_preset_ids_and_slugify():
+    assert not valid_id("abc\n") and valid_id("abc") and valid_id("SDM630 garaż")
+    assert slugify("- SDM630 garaż") == "SDM630 garaż" and slugify("...") == "preset"
+    for name in ("- x", " .-x. ", "-" * 5 + "ok", "ąę-ł", "a" * 200):
+        assert valid_id(slugify(name)), name
+
+
+def test_preset_probe_and_nan_are_validation_errors():
+    for probe in (["voltage_l1"], {"a": 1}, 5):
+        with pytest.raises(PresetError):
+            normalize_preset({"probe": probe, "registers": {"voltage_l1": {"address": 0}}})
+    for spec in ({"scale": float("nan")}, {"offset": float("inf")}, {"invalid": [float("nan")]}):
+        with pytest.raises(PresetError):
+            normalize_preset({"registers": {"v": {"address": 0, **spec}}})
+
+
+def test_broken_user_preset_does_not_break_list(tmp_path, monkeypatch):
+    from modbus_dash import presets as P
+    store = PresetStore(tmp_path)
+    store.save("dobry", {"name": "Dobry", "registers": {"v": {"address": 0}}})
+    (tmp_path / "zly.json").write_text('{"name": "Zły", "registers": {"v": {"address": 0}}}', encoding="utf-8")
+    real = P.normalize_preset
+
+    def boom(data):
+        if data.get("name") == "Zły":
+            raise TypeError("niespodziewany błąd")
+        return real(data)
+    monkeypatch.setattr(P, "normalize_preset", boom)
+    listed = {p["id"]: p for p in store.list()}
+    assert listed["dobry"]["valid"] and not listed["zly"]["valid"]
+    with pytest.raises(PresetError):
+        store.save("nan", {"name": "x", "registers": {"v": {"address": 0}}, "extra": float("nan")})
+
+
+def test_ha_classes_for_other_energy_units():
+    from modbus_dash.quantities import ha_classes
+    assert ha_classes("energy_import", "MWh") == ("energy", "total_increasing")
+    assert ha_classes("energy_reactive_import", "varh") == (None, "total_increasing")
+    assert ha_classes("energy_apparent", "VAh") == (None, "total_increasing")
+    assert ha_classes("energy_net", "MWh") == ("energy", "total")
+
+
+def test_read_range_odd_tail_keeps_pairs():
+    from modbus_dash.scanner import read_range
+
+    class EvenBus(FakeBus):  # jak Eastron: tylko parzysty adres i parzysta długość
+        def read_registers(self, unit, function, address, count):
+            from conftest import FakeModbusError
+            if address % 2 or count % 2:
+                self.calls.append((unit, function, address, count))
+                raise FakeModbusError("exception", 2, "Wyjątek Modbus 02")
+            return super().read_registers(unit, function, address, count)
+    bus = EvenBus(strict=False)
+    bus.put("input", 340, [1, 2, 3, 4])
+    vals, err, _, _, _ = read_range(bus, 1, "input", 340, 343)
+    assert err is None and vals == [1, 2, None]
+
+
+def test_read_range_request_cap_scales_with_span():
+    from modbus_dash.scanner import read_range
+    bus = FakeBus(strict=True)
+    bus.put("input", 0, [1, 2])
+    vals, err, req, _, covered = read_range(bus, 1, "input", 0, 382)
+    assert err is None and covered == 382 and req > 400 and vals[:2] == [1, 2]
