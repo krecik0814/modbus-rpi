@@ -38,6 +38,8 @@
     "voltage_l31":            {"address": 20532, "label": "Napięcie L3-L1", "unit": "V", "group": "line_volt", "decimals": 1},
     "voltage_l23":            {"address": 20534, "label": "Napięcie L2-L3", "unit": "V", "group": "line_volt", "decimals": 1},
     "energy_total":           {"address": 24576, "label": "Energia całkowita", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_total_t1":        {"address": 24578, "label": "Energia całkowita T1", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_total_t2":        {"address": 24580, "label": "Energia całkowita T2", "unit": "kWh", "group": "energy", "decimals": 2},
     "energy_total_l1":        {"address": 24582, "label": "Energia całkowita L1", "unit": "kWh", "group": "energy", "decimals": 2},
     "energy_total_l2":        {"address": 24584, "label": "Energia całkowita L2", "unit": "kWh", "group": "energy", "decimals": 2},
     "energy_total_l3":        {"address": 24586, "label": "Energia całkowita L3", "unit": "kWh", "group": "energy", "decimals": 2},

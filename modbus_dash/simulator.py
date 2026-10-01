@@ -336,6 +336,15 @@ def _pack_bits(bits):
     return bytes(out)
 
 
+def _type_limit(dtype):
+    """Największa bezpieczna wartość bezwzględna mantysy dla typu."""
+    if dtype.startswith("float"):
+        return float("inf")
+    count, _ = codec.DATA_TYPES[dtype]
+    bits = 8 if dtype in ("int8", "uint8") else count * 16
+    return (1 << (bits - 1)) - 1 if not dtype.startswith("u") else (1 << bits) - 1
+
+
 class _ModbusEx(Exception):
     def __init__(self, code):
         super().__init__(code)
@@ -400,13 +409,43 @@ class SimDevice:
         """Koduje wartości wielkości do rejestrów presetu (atomowo względem odczytów)."""
         q = phase_view(quantities, self.phases)
         new = {"input": {}, "holding": {}}
+        values = {}
         for spec, qkey, factor in self._sources:
             v = q.get(qkey)
-            v = 0.0 if v is None else v * factor
-            self._store(spec, codec.unscaled(v, spec["scale"], spec["offset"]), new)
+            values[spec["key"]] = 0.0 if v is None else v * factor
+        factors = self._scale_registers(values, new)
+        for spec, qkey, factor in self._sources:
+            v = values[spec["key"]]
+            f = factors.get(spec.get("scale_from"), 1.0) if spec.get("scale_from") else 1.0
+            self._store(spec, codec.unscaled(v, spec["scale"] * f, spec["offset"]), new)
         with self.lock:
             self._regs["input"].update(new["input"])
             self._regs["holding"].update(new["holding"])
+
+    def _scale_registers(self, values, new):
+        """Rejestry skali ("scale_from"): wykładnik dobrany tak, aby mantysy zależnych
+        rejestrów mieściły się w swoim typie; tryb multiply - mnożnik 1. Zwraca {klucz: mnożnik}."""
+        regs = self.preset["registers"]
+        deps = {}
+        for spec in regs.values():
+            if spec.get("scale_from"):
+                deps.setdefault(spec["scale_from"], []).append(spec)
+        factors = {}
+        for src, specs in deps.items():
+            sspec = regs[src]
+            if any(d.get("scale_mode") == "multiply" for d in specs):
+                factors[src] = 1.0
+                self._store(sspec, codec.unscaled(1, sspec["scale"], sspec["offset"]), new)
+                continue
+            exp = -6
+            for d in specs:
+                limit = _type_limit(d["type"])
+                v = abs(values.get(d["key"], 0.0) - d["offset"])
+                while exp < 9 and v / (abs(d["scale"]) * 10.0 ** exp) > limit:
+                    exp += 1
+            factors[src] = 10.0 ** exp
+            self._store(sspec, codec.unscaled(exp, sspec["scale"], sspec["offset"]), new)
+        return factors
 
     def read(self, function, address, count):
         """Bezpośredni odczyt obrazu rejestrów (bez kontroli strict)."""

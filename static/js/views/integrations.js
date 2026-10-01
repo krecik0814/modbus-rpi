@@ -644,6 +644,7 @@ function mqttCard(ctx, life) {
 function historyCard(ctx, life) {
   let saved = null;
   let available = null;
+  let active = null;
   let minInterval = 1;
 
   const en = checkRow('Zapisuj historię w bazie SQLite', 'plik history.sqlite w katalogu danych (--data-dir)');
@@ -733,17 +734,16 @@ function historyCard(ctx, life) {
   function renderState() {
     if (!saved) return;
     let badge, note;
-    if (available && saved.enabled) {
+    if (!available) {
+      badge = ['Wyłączony (--no-history)', 'badge-muted'];
+      note = ['notice-info', 'Aplikację uruchomiono z flagą --no-history - zapis do bazy jest niedostępny, wykresy pokazują tylko odczyty z bufora w pamięci.'];
+    } else if (saved.enabled && active) {
       badge = ['Zapis aktywny', 'badge-ok'];
-    } else if (!available && !saved.enabled) {
-      badge = ['Wyłączony', 'badge-muted'];
-      note = ['notice-info', 'Zapis do bazy jest wyłączony - wykresy pokazują tylko odczyty z bufora w pamięci.'];
-    } else if (!available) {
-      badge = ['Po restarcie', 'badge-warn'];
-      note = ['notice-warn', 'Zapis jest włączony w ustawieniach, ale baza nie działa w tej sesji. Włączenie zacznie działać po ponownym uruchomieniu aplikacji (np. sudo systemctl restart modbus-dash). Jeśli aplikację uruchomiono z flagą --no-history, zapis pozostanie wyłączony.'];
+    } else if (saved.enabled) {
+      badge = ['Uruchamianie', 'badge-warn'];
     } else {
-      badge = ['Do restartu', 'badge-warn'];
-      note = ['notice-warn', 'Zapis wyłączono w ustawieniach. Baza przestanie zbierać dane po ponownym uruchomieniu aplikacji; zapisane dane pozostaną w pliku.'];
+      badge = ['Wyłączony', 'badge-muted'];
+      note = ['notice-info', 'Zapis do bazy jest wyłączony - wykresy pokazują tylko odczyty z bufora w pamięci. Zapisane wcześniej dane pozostają w pliku data/history.sqlite.'];
     }
     headBadge.textContent = badge[0];
     headBadge.className = 'badge ' + badge[1];
@@ -753,6 +753,7 @@ function historyCard(ctx, life) {
   function apply(data) {
     saved = data.settings;
     available = !!data.available;
+    active = !!data.active;
     fillForm(saved);
     renderState();
   }

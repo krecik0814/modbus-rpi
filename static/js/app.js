@@ -15,7 +15,8 @@ const TITLES = {
  *  ctx.navigate(view, params, handoff) - przejście do widoku; handoff = dane w pamięci (np. szkic presetu)
  *  ctx.handoff         - dane przekazane przez poprzedni widok (jednorazowo)
  *  ctx.refreshHealth() - odświeża status w pasku bocznym
- * Widok: export function mount(root, ctx) -> {unmount()} (lub Promise tego)
+ * Widok: export function mount(root, ctx) -> {unmount(), canLeave?()} (lub Promise tego)
+ *  canLeave() -> bool|Promise<bool>: false zatrzymuje nawigację (np. niezapisane zmiany)
  */
 const ctx = {
   info: null,
@@ -32,7 +33,9 @@ const ctx = {
 
 let pendingHandoff = null;
 let current = null;      // {name, instance}
+let currentHash = null;  // adres aktualnie zamontowanego widoku
 let routeSeq = 0;
+let leaving = false;
 
 function parseHash() {
   const raw = location.hash.replace(/^#\/?/, '');
@@ -40,9 +43,23 @@ function parseHash() {
   return { name: VIEWS.includes(name) ? name : 'dashboard', params: Object.fromEntries(new URLSearchParams(q || '')) };
 }
 
-async function route() {
+async function route(ev) {
+  if (leaving) return;
+  if (current && current.instance && typeof current.instance.canLeave === 'function') {
+    leaving = true;
+    let ok = true;
+    try { ok = await current.instance.canLeave(); } catch (e) { console.error(e); }
+    leaving = false;
+    if (ok === false) {
+      const back = ev && ev.oldURL ? new URL(ev.oldURL).hash : currentHash;
+      if (back != null && location.hash !== back) history.replaceState(null, '', back || '#');
+      pendingHandoff = null;
+      return;
+    }
+  }
   const seq = ++routeSeq;
   const { name, params } = parseHash();
+  const sameView = current && current.name === name;
   if (current && current.instance && current.instance.unmount) {
     try { current.instance.unmount(); } catch (e) { console.error(e); }
   }
@@ -64,9 +81,11 @@ async function route() {
     if (seq !== routeSeq) return;
     const view = h('div', { class: 'view', 'data-view': name });
     mount(root, view);
+    if (!sameView) window.scrollTo(0, 0);
     const instance = await mod.mount(view, ctx);
     if (seq !== routeSeq) { instance && instance.unmount && instance.unmount(); return; }
     current = { name, instance };
+    currentHash = location.hash;
   } catch (e) {
     console.error(e);
     if (seq !== routeSeq) return;

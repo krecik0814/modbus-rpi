@@ -2,7 +2,7 @@
   "name": "Eastron SMART X96-1A",
   "manufacturer": "Eastron",
   "model": "SMART X96-1A",
-  "description": "Wielofunkcyjny miernik sieci 3-fazowej podłączany przez przekładniki (przekładnie CT/PT ustawiane w mierniku), mapa rejestrów jak w SDM630. Rejestry tylko do odczytu FC04, wartości float32 big-endian; część pomiarów (napięcia fazowe, moce na fazę, prąd N) jest dostępna tylko w układzie 3P4W. Energia całkowita = pobrana + oddana.",
+  "description": "Wielofunkcyjny miernik sieci 3-fazowej podłączany przez przekładniki (przekładnie CT/PT ustawiane w mierniku), mapa rejestrów jak w SDM630. Rejestry tylko do odczytu FC04, wartości float32 big-endian; w układzie 3P3W niedostępne są napięcia fazowe, moce i cos φ na fazę oraz prąd N. Energia całkowita = pobrana + oddana.",
   "phases": 3,
   "source": "mbmd meters/rs485/x961a.go (github.com/volkszaehler/mbmd); Eastron SMART X96-1A Modbus Protocol V1.0: https://www.eastroneurope.com/images/uploads/products/protocol/SMART_X96-1A_MODBUS_Protocol_v1.0.pdf",
   "register_type": "input",

@@ -127,6 +127,7 @@ class AppContext:
             "auth": tuple(args.auth.split(":", 1)) if args.auth else None,
             "allow_write": args.allow_write,
             "allow_any_host": True,
+            "no_history": args.no_history,
         }
         self.presets = PresetStore(Path(args.presets_dir), BASE_DIR / "presets" / "library")
         defaults = {"buses": {"default": {"name": "Domyślna", "kind": "tcp", "host": "127.0.0.1", "port": 502}}}
@@ -135,11 +136,8 @@ class AppContext:
         self.poller = Poller(self.config, self.presets, self.buses, PresetReader, TransportConfig)
         self.jobs = JobManager()
         self.history = None
-        if not args.no_history:
-            h = self.config.get()["history"]
-            if h["enabled"]:
-                self.history = HistoryDB(self.data_dir / "history.sqlite", h["bucket_seconds"], h["retention_days"])
-                self.poller.add_listener(self.history.on_sample)
+        self._HistoryDB = HistoryDB
+        self._apply_history()
         self.mqtt = MqttPublisher(self.config, self.poller)
         self.poller.add_listener(self.mqtt.on_sample)
         self.config.on_change(self._on_config_change)
@@ -148,7 +146,23 @@ class AppContext:
         if not args.no_sim:
             self._start_simulator(args)
 
+    def _apply_history(self):
+        """Włącza/wyłącza zapis historii w SQLite zgodnie z konfiguracją (bez restartu)."""
+        h = self.config.get()["history"]
+        want = h["enabled"] and not self.options["no_history"]
+        if want and self.history is None:
+            self.history = self._HistoryDB(self.data_dir / "history.sqlite", h["bucket_seconds"], h["retention_days"])
+            self.poller.add_listener(self.history.on_sample)
+        elif not want and self.history is not None:
+            db, self.history = self.history, None
+            self.poller.remove_listener(db.on_sample)
+            db.close()
+        elif self.history is not None:
+            self.history.configure(h["bucket_seconds"], h["retention_days"])
+
     def _on_config_change(self, section):
+        if section == "history":
+            self._apply_history()
         if section in ("buses", "devices", "history"):
             self.poller.reload()
         if section in ("mqtt", "devices"):

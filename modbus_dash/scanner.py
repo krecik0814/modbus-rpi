@@ -182,7 +182,10 @@ def detect_preset(job, bus, unit, store, timeout=None):
             keys.insert(0, preset["probe"])
         if not keys:
             keys = list(preset["registers"])[:4]
-        sub = {**preset, "registers": {k: preset["registers"][k] for k in keys[:6]}}
+        keys = keys[:6]
+        keys += [preset["registers"][k]["scale_from"] for k in keys
+                 if preset["registers"][k].get("scale_from") and preset["registers"][k]["scale_from"] not in keys]
+        sub = {**preset, "registers": {k: preset["registers"][k] for k in keys}}
         try:
             with quick(bus, timeout) if timeout else contextlib.nullcontext():
                 res = PresetReader(sub).read(bus, unit)
@@ -194,6 +197,8 @@ def detect_preset(job, bus, unit, store, timeout=None):
             "manufacturer": summary.get("manufacturer"), "model": summary.get("model"),
             "builtin": summary["builtin"], "score": round(score, 3),
             "matched": sum(k in DETECT_KEYS for k in sub["registers"]),
+            "meta": {k: {"label": r["label"], "unit": r["unit"], "decimals": r["decimals"]}
+                     for k, r in sub["registers"].items()},
             "values": {k: v for k, v in res["values"].items() if v is not None},
         })
     job.progress(len(summaries), len(summaries), "Gotowe")

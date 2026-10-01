@@ -72,7 +72,8 @@ def validate_device(dev_id, data, buses):
     }
 
 
-def _merge(defaults, data):
+def _merge(defaults, data, strict=False):
+    """Uzupełnia brakujące pola wartościami domyślnymi. strict=True: błędny typ -> ConfigError."""
     out = dict(defaults)
     if isinstance(data, dict):
         for k, v in data.items():
@@ -87,11 +88,14 @@ def _merge(defaults, data):
                 ok = isinstance(v, type(d))
             if ok:
                 out[k] = v
+            elif strict:
+                kind = "logiczna" if isinstance(d, bool) else "liczba" if isinstance(d, (int, float)) else "tekst"
+                raise ConfigError(f"pole '{k}' ma nieprawidłowy typ (oczekiwano: {kind})")
     return out
 
 
-def validate_mqtt(data):
-    m = _merge(DEFAULT_MQTT, data)
+def validate_mqtt(data, strict=False):
+    m = _merge(DEFAULT_MQTT, data, strict)
     if not 1 <= int(m["port"]) <= 65535:
         raise ConfigError("MQTT: port 1-65535")
     if not 1 <= int(m["interval"]) <= 3600:
@@ -103,8 +107,8 @@ def validate_mqtt(data):
     return m
 
 
-def validate_history(data):
-    h = _merge(DEFAULT_HISTORY, data)
+def validate_history(data, strict=False):
+    h = _merge(DEFAULT_HISTORY, data, strict)
     if not 1 <= int(h["retention_days"]) <= 3650:
         raise ConfigError("Historia: retencja 1-3650 dni")
     if int(h["bucket_seconds"]) not in (10, 30, 60, 300, 900):
@@ -247,9 +251,12 @@ class ConfigStore:
             return True
 
     def put_section(self, name, data):
+        """Aktualizacja sekcji; pola nieobecne w data zachowują bieżące wartości."""
         validator = {"mqtt": validate_mqtt, "history": validate_history}[name]
-        value = validator(data)
+        if not isinstance(data, dict):
+            raise ConfigError("oczekiwano obiektu")
         with self._lock:
+            value = validator({**self._data[name], **data}, strict=True)
             self._data[name] = value
             self._commit(name)
         return value

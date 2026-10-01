@@ -12,6 +12,7 @@ literami bajtów wartości zapisanej big-endian (A = najstarszy bajt):
 Dla typów 64-bitowych ta sama zasada: ABCD = słowa od najstarszego,
 CDAB = słowa od najmłodszego, BADC/DCBA = dodatkowo zamienione bajty w słowie.
 Dla typów 16-bitowych liczy się tylko zamiana bajtów (BADC/DCBA).
+Typy 8-bitowe (int8/uint8) czytają młodszy bajt rejestru, a przy BADC/DCBA starszy.
 """
 
 import math
@@ -19,6 +20,8 @@ import struct
 
 # typ -> (liczba rejestrów, format struct big-endian)
 DATA_TYPES = {
+    "int8": (1, ">b"),     # młodszy bajt rejestru (BADC/DCBA: starszy bajt)
+    "uint8": (1, ">B"),
     "int16": (1, ">h"),
     "uint16": (1, ">H"),
     "int32": (2, ">i"),
@@ -42,6 +45,7 @@ _ORDER_ALIASES = {
 _TYPE_ALIASES = {
     "float": "float32", "real": "float32", "f32": "float32", "ieee754": "float32",
     "double": "float64", "f64": "float64",
+    "sint8": "int8", "byte": "uint8", "u8": "uint8", "i8": "int8",
     "int": "int16", "short": "int16", "i16": "int16", "s16": "int16",
     "uint": "uint16", "word": "uint16", "u16": "uint16",
     "dint": "int32", "long": "int32", "i32": "int32", "s32": "int32",
@@ -129,6 +133,10 @@ def decode(regs, dtype="float32", order="ABCD"):
     count, fmt = DATA_TYPES[dtype]
     if len(regs) < count:
         raise ValueError(f"{dtype} wymaga {count} rejestrów, podano {len(regs)}")
+    if dtype in ("int8", "uint8"):
+        w = int(regs[0]) & 0xFFFF
+        byte = (w >> 8) if _flags(order)[1] else (w & 0xFF)
+        return struct.unpack(fmt, bytes([byte]))[0]
     return struct.unpack(fmt, regs_to_bytes(regs[:count], order))[0]
 
 
@@ -142,7 +150,7 @@ def encode(value, dtype="float32", order="ABCD"):
     if dtype.startswith("float"):
         value = float(value)
     else:
-        bits = count * 16
+        bits = 8 if dtype in ("int8", "uint8") else count * 16
         if math.isnan(value) or math.isinf(value):
             value = 0
         value = int(round(value))
@@ -151,6 +159,9 @@ def encode(value, dtype="float32", order="ABCD"):
         else:
             lo, hi = -(1 << (bits - 1)), (1 << (bits - 1)) - 1
         value = max(lo, min(hi, value))
+    if dtype in ("int8", "uint8"):
+        byte = struct.pack(fmt, value)[0]
+        return [byte << 8] if _flags(order)[1] else [byte]
     return bytes_to_regs(struct.pack(fmt, value), order)
 
 

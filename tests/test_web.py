@@ -191,7 +191,9 @@ def test_unit_scan_and_detect(env):
     assert [f["unit"] for f in job["result"]["found"]] == [1, 2]
     job = _job(c, post(c, "/api/detect", {"bus": "sim", "unit": 1}))
     assert job["state"] == "done", job
-    assert job["result"]["candidates"][0]["id"] == "simulator_3f"
+    best = job["result"]["candidates"][0]
+    assert best["id"] == "simulator_3f"
+    assert best["meta"]["voltage_l1"]["unit"] == "V"
 
 
 def test_write_disabled_by_default(env):
@@ -247,3 +249,58 @@ def test_modbus_errors_are_json(env):
     assert r.status_code in (502, 504) and r.get_json()["error"]
     r = post(c, "/api/live", {"bus": "sim", "unit": 99, "preset": "simulator_3f"})
     assert r.status_code == 502 and "timeout" in r.get_json()["error"].lower() or "odpowiedzi" in r.get_json()["error"]
+
+
+def test_partial_settings_update_and_types(env):
+    ctx, c, _ = env
+    put(c, "/api/settings/mqtt", {"enabled": False, "host": "broker.lan", "port": 1885})
+    r = put(c, "/api/settings/mqtt", {"interval": 20})
+    s = r.get_json()["settings"]
+    assert (s["host"], s["port"], s["interval"]) == ("broker.lan", 1885, 20)
+    r = put(c, "/api/settings/mqtt", {"port": "1883"})
+    assert r.status_code == 400 and "port" in r.get_json()["error"]
+
+
+def test_create_flag_prevents_overwrite(env):
+    ctx, c, port = env
+    body = {"kind": "tcp", "host": "127.0.0.1", "port": port}
+    assert c.put("/api/buses/dup?create=1", data=json.dumps(body), content_type="application/json").status_code == 200
+    r = c.put("/api/buses/dup?create=1", data=json.dumps(body), content_type="application/json")
+    assert r.status_code == 409
+    dev = {"bus": "dup", "unit": 1, "preset": "simulator_3f", "enabled": False}
+    assert c.put("/api/devices/d1?create=1", data=json.dumps(dev), content_type="application/json").status_code == 200
+    assert c.put("/api/devices/d1?create=1", data=json.dumps(dev), content_type="application/json").status_code == 409
+    c.delete("/api/devices/d1")
+    c.delete("/api/buses/dup")
+
+
+def test_broken_preset_file_returns_text(env):
+    ctx, c, _ = env
+    (ctx.presets.user_dir / "zepsuty.json").write_text('{"name": "x", ', encoding="utf-8")
+    try:
+        r = c.get("/api/presets/zepsuty")
+        assert r.status_code == 422 and r.get_json()["text"].startswith('{"name"')
+        listed = {p["id"]: p for p in c.get("/api/presets").get_json()}
+        assert listed["zepsuty"]["valid"] is False
+        r = post(c, "/api/live", {"bus": "sim", "preset": "zepsuty"})
+        assert r.status_code == 400
+    finally:
+        (ctx.presets.user_dir / "zepsuty.json").unlink()
+
+
+def test_json_keeps_preset_field_order(env):
+    ctx, c, _ = env
+    r = c.get("/api/presets/simulator_3f")
+    keys = list(json.loads(r.get_data(as_text=True)))
+    assert keys.index("name") < keys.index("registers")
+    regs = list(json.loads(r.get_data(as_text=True))["registers"])
+    assert regs[:3] == ["voltage_l1", "voltage_l2", "voltage_l3"]
+
+
+def test_history_toggle_without_restart(env):
+    ctx, c, _ = env
+    assert ctx.history is not None
+    r = put(c, "/api/settings/history", {"enabled": False})
+    assert r.get_json()["active"] is False and ctx.history is None
+    r = put(c, "/api/settings/history", {"enabled": True})
+    assert r.get_json()["active"] is True and ctx.history is not None

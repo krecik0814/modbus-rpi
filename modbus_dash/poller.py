@@ -93,6 +93,12 @@ class Poller:
         """fn(device_id, runtime, sample) - wywoływane po każdym odczycie."""
         self.listeners.append(fn)
 
+    def remove_listener(self, fn):
+        try:
+            self.listeners.remove(fn)
+        except ValueError:
+            pass
+
     def reload(self, *_):
         """Synchronizuje urządzenia i wątki z bieżącą konfiguracją."""
         cfg = self.config.get()

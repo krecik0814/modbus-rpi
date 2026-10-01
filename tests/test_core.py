@@ -17,7 +17,10 @@ from modbus_dash.presets import PresetError, PresetStore, normalize_preset, slug
 @pytest.mark.parametrize("order", codec.BYTE_ORDERS)
 @pytest.mark.parametrize("dtype", list(codec.DATA_TYPES))
 def test_roundtrip_all_types_and_orders(dtype, order):
-    value = -1234.5 if dtype.startswith("float") else (1234 if dtype.startswith("u") else -1234)
+    if dtype.endswith("int8"):
+        value = 123 if dtype.startswith("u") else -12
+    else:
+        value = -1234.5 if dtype.startswith("float") else (1234 if dtype.startswith("u") else -1234)
     regs = codec.encode(value, dtype, order)
     assert len(regs) == codec.register_count(dtype)
     assert codec.decode(regs, dtype, order) == value
@@ -258,3 +261,62 @@ def test_invalid_sentinel_values():
     assert res["values"] == {"a": None, "b": None}
     with pytest.raises(PresetError):
         normalize_preset({"registers": {"a": {"address": 0, "invalid": "x"}}})
+
+
+def test_invalid_sentinel_survives_json_precision_loss():
+    # przeglądarka zamienia 18446744073709551615 na 18446744073709552000
+    p = _preset({"e": {"address": 0, "type": "uint64", "invalid": [18446744073709552000]}})
+    bus = FakeBus()
+    bus.put("input", 0, [0xFFFF] * 4)
+    assert PresetReader(p).read(bus, 1)["values"]["e"] is None
+
+
+def test_ha_classes_for_net_energy():
+    from modbus_dash.quantities import ha_classes
+    assert ha_classes("energy_import", "kWh") == ("energy", "total_increasing")
+    assert ha_classes("energy_net", "kWh") == ("energy", "total")
+    assert ha_classes("energy_reactive_net_l1", "kvarh") == (None, "total")
+    assert ha_classes("energy_reactive_import", "kVArh") == (None, "total_increasing")
+    assert ha_classes("pf_l1", "") == ("power_factor", "measurement")
+
+
+@pytest.mark.parametrize("order,expected", [("ABCD", [0x00FE]), ("BADC", [0xFE00])])
+def test_int8_low_and_high_byte(order, expected):
+    assert codec.encode(-2, "int8", order) == expected
+    assert codec.decode([0x12FE], "int8", "ABCD") == -2
+    assert codec.decode([0xFE12], "int8", "BADC") == -2
+    assert codec.decode([0x12FE], "uint8", "ABCD") == 254
+
+
+def test_scale_from_register_pow10_and_multiply():
+    p = _preset({
+        "voltage_l1": {"address": 0, "type": "int16", "scale_from": "u_exp", "decimals": 1},
+        "u_exp": {"address": 1, "type": "int8"},
+        "energy_import": {"address": 2, "type": "uint32", "scale": 0.001, "scale_from": "e_fac",
+                          "scale_from_mode": "multiply", "decimals": 3},
+        "e_fac": {"address": 4, "type": "uint32"},
+    })
+    bus = FakeBus()
+    bus.put("input", 0, [2301, 0x00FF])               # 2301 * 10^-1
+    bus.put("input", 2, codec.encode(1234, "uint32"))
+    bus.put("input", 4, codec.encode(10, "uint32"))     # 1234 Wh * 10 / 1000
+    res = PresetReader(p).read(bus, 1)
+    assert res["values"]["voltage_l1"] == 230.1
+    assert res["values"]["energy_import"] == 12.34
+    assert res["values"]["u_exp"] == -1
+
+
+def test_scale_from_validation_and_missing_source():
+    with pytest.raises(PresetError):
+        normalize_preset({"registers": {"a": {"address": 0, "scale_from": "nope"}}})
+    with pytest.raises(PresetError):
+        normalize_preset({"registers": {"a": {"address": 0, "scale_from": "b"},
+                                        "b": {"address": 2, "scale_from": "a"}}})
+    with pytest.raises(PresetError):
+        normalize_preset({"registers": {"a": {"address": 0, "scale_from": "b", "scale_from_mode": "x"},
+                                        "b": {"address": 2}}})
+    p = _preset({"a": {"address": 0, "type": "int16", "scale_from": "b"}, "b": {"address": 1, "type": "int16"}})
+    bus = FakeBus(strict=True)
+    bus.put("input", 0, [100])
+    res = PresetReader(p).read(bus, 1)
+    assert res["values"]["a"] is None and "skali" in res["errors"]["a"]

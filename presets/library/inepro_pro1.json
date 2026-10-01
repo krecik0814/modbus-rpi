@@ -2,7 +2,7 @@
   "name": "Inepro PRO1-Mod",
   "manufacturer": "Inepro Metering",
   "model": "PRO1-Mod",
-  "description": "Licznik 1-fazowy MID (1 moduł) z pomiarem dwukierunkowym i dwiema taryfami; ten sam protokół co PRO380-Mod. Rejestry holding FC03, float32 big-endian; moce podawane w kW/kvar/kVA są przeliczane na W/var/VA.",
+  "description": "Licznik 1-fazowy MID (1 moduł) z pomiarem dwukierunkowym i dwiema taryfami; ten sam protokół co PRO380-Mod. Rejestry holding FC03, float32 big-endian; moce podawane w kW/kvar/kVA są przeliczane na W/var/VA. Napięcie i prąd pochodzą z rejestrów 'Voltage' (0x5000) i 'Current' (0x500A); dublujące je w liczniku 1-fazowym 'L1 Voltage' (0x5002) i 'L1 Current' (0x500C) pominięto.",
   "phases": 1,
   "source": "Inepro PRO1 Series user manual V2.18-5, Appendix 3 PRO1-Mod (mapa rejestrów, ustawienia portu): https://www.hw-group.com/files/download/man/version/inepro-pro1-series-man_2-18-5.pdf; protokół wspólny z PRO380 jak w mbmd meters/rs485/inepro.go (github.com/volkszaehler/mbmd)",
   "register_type": "holding",

@@ -6,8 +6,9 @@ z nakładką RS-485, adaptera USB-RS485 albo bramki Ethernet. Bez chmury, bez ze
 - **Dashboard na żywo** - karty i wykresy, historia (pamięć + SQLite), eksport CSV, wiele liczników jednocześnie.
 - **Biblioteka gotowych presetów** - Eastron, Orno, Carlo Gavazzi, Schneider, Finder, Chint, ABB, Janitza, Siemens,
   Socomec, Peacefair PZEM i inne (patrz [Obsługiwane liczniki](#obsługiwane-liczniki)).
-- **Pełna obsługa typów danych** - int16/uint16/int32/uint32/int64/uint64/float32/float64, wszystkie kolejności bajtów
-  (ABCD, CDAB, BADC, DCBA), skalowanie i przesunięcie, Input i Holding Registers w jednym presecie.
+- **Pełna obsługa typów danych** - int8/uint8/int16/uint16/int32/uint32/int64/uint64/float32/float64, wszystkie
+  kolejności bajtów (ABCD, CDAB, BADC, DCBA), skalowanie i przesunięcie, skala z innego rejestru (SunSpec),
+  Input i Holding Registers w jednym presecie.
 - **Skaner rejestrów** z automatyczną identyfikacją wartości, trybem Live, wyszukiwaniem urządzeń (Unit ID) i
   **automatycznym rozpoznawaniem modelu licznika**.
 - **Transporty**: RS-485 RTU, RS-485 ASCII, Modbus TCP, RTU-over-TCP (tanie bramki w trybie transparentnym), UDP.
@@ -207,12 +208,14 @@ Stary format (v2 i wcześniejsze wersje aplikacji) jest nadal obsługiwany - wsz
 | Pole | Opis |
 |------|------|
 | `register_type` | domyślna funkcja: `input` (FC04) lub `holding` (FC03); każdy rejestr może ją nadpisać |
-| `data_type` / `type` | `int16`, `uint16`, `int32`, `uint32`, `float32`, `int64`, `uint64`, `float64` |
+| `data_type` / `type` | `int8`, `uint8` (połowa rejestru), `int16`, `uint16`, `int32`, `uint32`, `float32`, `int64`, `uint64`, `float64` |
 | `byte_order` | `ABCD` (big-endian), `CDAB` (word swap), `BADC` (byte swap), `DCBA` (little-endian); aliasy `big_endian`, `word_swap`, `byte_swap`, `little_endian` |
 | `address` | adres protokołu liczony od 0, liczba lub napis `"0x0156"` |
 | `address_offset` | dodawany do każdego adresu - np. `-1`, gdy przepisujesz adresy z dokumentacji liczone od 1, albo `-30001` / `-40001` dla notacji 3xxxx / 4xxxx |
 | `scale`, `offset` | wartość = surowa × `scale` + `offset` (np. `0.1` dla napięcia w 0.1 V, `1000` dla mocy w kW → W) |
 | `invalid` | surowe wartości oznaczające brak danych (np. `65535`) |
+| `scale_from` | klucz rejestru z wykładnikiem: wartość × 10^(jego wartość) - SunSpec „scale factor”, Gossen EnergyMID |
+| `scale_from_mode` | `pow10` (domyślnie) albo `multiply` - mnożnikiem jest sama wartość wskazanego rejestru |
 | `decimals`, `unit`, `group`, `label` | prezentacja na dashboardzie |
 | `read.max_block` / `read.max_gap` | maks. rejestrów w jednym zapytaniu (1-125) i maks. dziura łączona w jeden odczyt |
 | `probe` | rejestr używany przy rozpoznawaniu modelu |
@@ -239,6 +242,50 @@ Tabela generowana z biblioteki (`python tools/meters_table.py --readme`). Kolumn
 ustawienia fabryczne tylko wtedy, gdy potwierdza je dokumentacja - zawsze sprawdź ustawienia w menu licznika.
 
 <!-- METERS_TABLE_START -->
+| Producent | Model | Fazy | Rejestry | Typy danych | Kolejność | Port (fabr.) | Wielkości | Preset |
+|---|---|---|---|---|---|---|---|---|
+| ABB | A43 / A44 / B23 / B24 (wersje z RS-485 Modbus), także 1-fazowy B21 | 3 | Holding (FC03) | int16, int32, int64, uint16, uint32, uint64 | ABCD | - | 46 | `abb_a43_a44_b23_b24` |
+| B+G e-tech | DS100-00B / DS100-30B | 3 | Holding (FC03) | int16, int32, uint16, uint32 | ABCD | 9600 8N1 | 51 | `bg_etech_ds100` |
+| B+G e-tech | WS100-1943 / WS100-19L3 | 1 | Holding (FC03) | int16, int32, uint16, uint32 | ABCD | 9600 8N1 | 19 | `bg_etech_ws100` |
+| Bernecker Engineering | MPM3PM | 3 | Holding (FC03) | int32, uint32 | ABCD | - | 23 | `bernecker_mpm3pm` |
+| Carlo Gavazzi | EM24-DIN AV9 / AV0 / AV5 / AV6 z portem RS485 (starszy protokół EM24-DIN v2) | 3 | Input (FC04) | int16, int32 | CDAB | - | 40 | `carlo_gavazzi_em24` |
+| Carlo Gavazzi | EM24DINAV23XE1X / EM24DINAV53XE1X (także wersje PFA i PFB) | 3 | Input (FC04) | int16, int32, uint16 | CDAB | - | 39 | `carlo_gavazzi_em24_e1` |
+| Carlo Gavazzi | EM330-DIN / EM340-DIN / ET330-DIN / ET340-DIN (port S1, RS485) | 3 | Input (FC04) | int16, int32 | CDAB | 9600 8N1 | 41 | `carlo_gavazzi_em330_em340` |
+| Chint | DDSU666 (Modbus RTU) | 1 | Holding (FC03) | float32 | ABCD | - | 9 | `chint_ddsu666` |
+| Chint | DTSU666 / DSSU666 | 3 | Holding (FC03) | float32 | ABCD | 9600 8N1 | 30 | `chint_dtsu666` |
+| DZG Metering | DVH4013 (wersja z RS-485 Modbus) | 3 | Holding (FC03) | uint32 | ABCD | 9600 8E1 | 18 | `dzg_dvh4013` |
+| Eastron | SDM120-Modbus | 1 | Input (FC04) | float32 | ABCD | 2400 8N1 | 16 | `eastron_sdm120` |
+| Eastron | SDM220-Modbus / SDM230-Modbus | 1 | Input (FC04) | float32 | ABCD | - | 14 | `eastron_sdm220_sdm230` |
+| Eastron | SDM54-M / SDM54-2T | 3 | Input (FC04) | float32 | ABCD | 9600 8N1 | 53 | `eastron_sdm54` |
+| Eastron | SDM630-Modbus V1 / V2 (MID i non-MID) | 3 | Input (FC04) | float32 | ABCD | 9600 8N1 | 70 | `eastron_sdm630` |
+| Eastron | SDM72D-M (pierwsza wersja) | 3 | Input (FC04) | float32 | ABCD | - | 4 | `eastron_sdm72` |
+| Eastron | SDM72D-M-2 (SDM72DM-V2) | 3 | Input (FC04) | float32 | ABCD | 9600 8N1 | 38 | `eastron_sdm72_v2` |
+| Eastron | SMART X96-1A | 3 | Input (FC04) | float32 | ABCD | 9600 8N1 | 70 | `eastron_smart_x96_1a` |
+| Eltako | DSZ15DZMOD / DSZ16 (format danych integer) | 3 | Input (FC04) | int32, uint32 | ABCD | 9600 8N1 | 16 | `eltako_dsz15dzmod` |
+| Eltako | DSZ16D / DSZ16DZ / DSZ16WD / DSZ16WDZ (także wersje bez MID z literą E) | 3 | Input (FC04) | int32, uint32 | ABCD | 9600 8N1 | 40 | `eltako_dsz16` |
+| Eltako | WSZ16D / WSZ16DZ (także wersje bez MID z literą E) | 1 | Input (FC04) | int32, uint32 | ABCD | 9600 8N1 | 14 | `eltako_wsz16` |
+| Finder | 7M.24 (wersje z RS485 Modbus RTU) | 1 | Input (FC04) | float32 | ABCD | - | 16 | `finder_7m24` |
+| Finder | 7M.38.8.400.xxxx (wersje z RS485 Modbus RTU) | 3 | Input (FC04) | float32 | ABCD | - | 45 | `finder_7m38` |
+| Gossen Metrawatt | EM2281 / EM2289 / EM2381 / EM2387 / EM2389 (U228x-W7 / U238x-W7) | 3 | Input (FC04) | int16, int8, uint16, uint32 | ABCD | - | 34 | `gossen_metrawatt_energymid` |
+| Hiking | DDS238-2 ZN/S / DDS238-2 ZN/SR | 1 | Holding (FC03) | int16, uint16, uint32 | ABCD | 9600 8N1 | 8 | `hiking_dds238_2_zn_s` |
+| Inepro Metering | PRO1-Mod | 1 | Holding (FC03) | float32 | ABCD | 9600 8E1 | 25 | `inepro_pro1` |
+| Inepro Metering | PRO380-Mod (także wersja CT) | 3 | Holding (FC03) | float32 | ABCD | 9600 8E1 | 59 | `inepro_pro380` |
+| Janitza | B23 312-10J / B24 312-10J (wersje z RS-485 Modbus) | 3 | Holding (FC03) | float32 | ABCD | - | 34 | `janitza_b23_b24` |
+| Lovato Electric | DMG610 (wspólna mapa serii DMG6..: DMG615, DMG611R, DMG620) | 3 | Input (FC04) | int32, uint32, uint64 | ABCD | 9600 8N1 | 44 | `lovato_dmg610` |
+| OEM (różne marki) | DDM18SD (RS485 Modbus RTU) | 1 | Input (FC04) | float32 | ABCD | - | 8 | `ddm18sd` |
+| Orno | OR-WE-504 | 1 | Holding (FC03) | uint16, uint32 | ABCD | 9600 8E1 | 9 | `orno_or_we_504` |
+| Orno | OR-WE-514 / OR-WE-515 | 1 | Holding (FC03) | int16, int32, uint16, uint32 | ABCD | 9600 8E1 | 13 | `orno_or_we_514` |
+| Orno | OR-WE-516 / OR-WE-517 | 3 | Holding (FC03) | float32 | ABCD | 9600 8E1 | 59 | `orno_or_we_517` |
+| Orno | OR-WE-525 / OR-WE-526 | 1 | Input (FC04) | int16, int32 | ABCD | 9600 8N1 | 25 | `orno_or_we_525` |
+| Peacefair | PZEM-004T v3.0 (10 A / 100 A) / PZEM-014 / PZEM-016 | 1 | Input (FC04) | int16, uint16, uint32 | CDAB | 9600 8N1 | 7 | `peacefair_pzem_004t` |
+| Peacefair | PZEM-017 / PZEM-003 | 1 | Input (FC04) | int16, uint16, uint32 | CDAB | 9600 8N2 | 6 | `peacefair_pzem_017` |
+| Saia Burgess Controls | ALE3D5FD10C2A00 / ALE3D5FD10C3A00 (MID) | 3 | Holding (FC03) | int16, uint16, uint32 | ABCD | - | 19 | `saia_burgess_ale3` |
+| Schneider Electric | iEM3150 / iEM3155 / iEM3250 / iEM3255 / iEM3350 / iEM3355 | 3 | Holding (FC03) | float32, int64 | ABCD | - | 26 | `schneider_iem3000` |
+| Shelly | Pro 3EM / Pro 3EM-3CT63 / Pro 3EM-120 / Pro 3EM-400 | 3 | Input (FC04) | float32 | CDAB | - | 30 | `shelly_pro_3em` |
+| Siemens | SENTRON PAC2200 (7KM2200, RS485 lub Ethernet) | 3 | Input (FC04) | float32, float64 | ABCD | 19200 8N2 | 34 | `siemens_pac2200` |
+| Socomec | Countis E33 / E43 (rodzina E3x / E4x z tablicą JBUS common) | 3 | Holding (FC03) | int32, uint32 | ABCD | - | 35 | `socomec_countis_e3x_e4x` |
+| SolarEdge | SE-MTR-3Y; ta sama mapa rejestrów: WattNode WNC-3Y/3D-xxx-MB (np. SE-WNC-3Y-400-MB-K1) | 3 | Input (FC04) | float32 | CDAB | - | 50 | `solaredge_se_mtr_3y` |
+| WAGO | 879-3000 (4PU) / 879-3020 (4PS) / 879-3040 (2PU CT) | 3 | Holding (FC03) | float32 | ABCD | 9600 8E1 | 47 | `wago_879_30x0` |
 <!-- METERS_TABLE_END -->
 
 Mapy rejestrów oparto głównie na projekcie [mbmd](https://github.com/volkszaehler/mbmd) (licencja BSD-3) oraz

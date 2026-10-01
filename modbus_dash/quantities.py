@@ -111,11 +111,11 @@ def ha_classes(key, unit):
     if key.startswith("pf_") or key == "pf_total":
         return "power_factor", "measurement"
     dc, sc = _HA_UNIT.get(unit, (None, "measurement"))
+    net = "net" in key.split("_")  # bilans (import - eksport) może maleć
     if dc == "energy":
-        # energia netto może maleć
-        sc = "total" if key.startswith("energy_net") else "total_increasing"
-    if unit == "kvarh":
-        return None, "total_increasing"
+        sc = "total" if net else "total_increasing"
+    if unit in ("kvarh", "kVAh"):
+        return None, "total" if net else "total_increasing"
     return dc, sc
 
 

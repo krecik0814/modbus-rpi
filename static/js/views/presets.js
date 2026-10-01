@@ -27,7 +27,7 @@ const TEMPLATE = {
 };
 
 // typ -> liczba rejestrów (jak modbus_dash/codec.py)
-const DATA_TYPES = { int16: 1, uint16: 1, int32: 2, uint32: 2, float32: 2, int64: 4, uint64: 4, float64: 4 };
+const DATA_TYPES = { int8: 1, uint8: 1, int16: 1, uint16: 1, int32: 2, uint32: 2, float32: 2, int64: 4, uint64: 4, float64: 4 };
 const BYTE_ORDERS = ['ABCD', 'CDAB', 'BADC', 'DCBA'];
 const ORDER_ALIASES = {
   abcd: 'ABCD', big_endian: 'ABCD', big: 'ABCD', be: 'ABCD',
@@ -36,6 +36,7 @@ const ORDER_ALIASES = {
   dcba: 'DCBA', little_endian: 'DCBA', little: 'DCBA', le: 'DCBA',
 };
 const TYPE_ALIASES = {
+  sint8: 'int8', byte: 'uint8', u8: 'uint8', i8: 'int8',
   float: 'float32', real: 'float32', f32: 'float32', ieee754: 'float32', double: 'float64', f64: 'float64',
   int: 'int16', short: 'int16', i16: 'int16', s16: 'int16', uint: 'uint16', word: 'uint16', u16: 'uint16',
   dint: 'int32', long: 'int32', i32: 'int32', s32: 'int32', udint: 'uint32', dword: 'uint32', ulong: 'uint32',
@@ -88,7 +89,7 @@ function inline(v) {
 const TOP_ORDER = ['name', 'manufacturer', 'model', 'description', 'source', 'phases', 'register_type', 'byte_order',
   'data_type', 'address_offset', 'serial', 'read', 'probe', 'registers'];
 const REG_ORDER = ['address', 'label', 'unit', 'group', 'decimals', 'type', 'data_type', 'byte_order', 'register_type',
-  'scale', 'offset', 'invalid'];
+  'scale', 'offset', 'scale_from', 'scale_from_mode', 'invalid'];
 
 /** Kopia obiektu z kluczami w podanej kolejności (pozostałe na końcu, bez zmian). */
 function orderKeys(obj, order) {
@@ -260,7 +261,6 @@ function registerRows(data) {
     };
     const type = pick(spec.type ?? spec.data_type, data.data_type, normType, 'float32');
     const func = pick(spec.register_type, data.register_type, normFunc, 'input');
-    if (!func.bad) func.text = FUNC_LABEL[func.text];
     rows.push({
       key,
       label: typeof spec.label === 'string' ? spec.label : key,
@@ -270,6 +270,8 @@ function registerRows(data) {
       order: pick(spec.byte_order, data.byte_order, normOrder, 'ABCD'),
       scale: spec.scale ?? 1,
       offset: spec.offset ?? 0,
+      scaleFrom: typeof spec.scale_from === 'string' ? spec.scale_from : null,
+      scaleMode: spec.scale_from_mode === 'multiply' ? 'multiply' : 'pow10',
       unit: typeof spec.unit === 'string' ? spec.unit : '',
       group: typeof spec.group === 'string' && spec.group ? spec.group : 'other',
     });
@@ -426,6 +428,10 @@ export function mount(root, ctx) {
     const fl = lib.filter(match);
     const count = (shown, all) => (words.length ? `${shown} z ${all}` : String(all));
     const draft = S.sel && S.sel.kind === 'draft' ? draftItem() : null;
+    // przebudowa listy nie może gubić fokusu klawiatury ani przewinięcia
+    const act = document.activeElement;
+    const focusKey = act && listBox.contains(act) && act.dataset ? act.dataset.key : null;
+    const scroll = listBox.scrollTop;
     fill(listBox,
       h('section', { class: 'pr-sec', 'aria-label': 'Moje presety' },
         h('h3', { class: 'pr-sec-title' }, `Moje presety (${count(fm.length, mine.length)})`),
@@ -438,6 +444,11 @@ export function mount(root, ctx) {
         h('h3', { class: 'pr-sec-title' }, `Biblioteka (${count(fl.length, lib.length)})`),
         fl.length ? fl.map(itemEl)
           : h('p', { class: 'pr-none' }, words.length ? 'Brak pasujących presetów.' : 'Biblioteka jest pusta.')));
+    listBox.scrollTop = scroll;
+    if (focusKey) {
+      const el = [...listBox.querySelectorAll('[data-key]')].find((x) => x.dataset.key === focusKey);
+      if (el) el.focus({ preventScroll: true });
+    }
   }
 
   function itemEl(p) {
@@ -450,7 +461,7 @@ export function mount(root, ctx) {
     ].filter(Boolean);
     return h('button', {
       type: 'button', class: 'list-item pr-item' + (selected ? ' selected' : ''),
-      'aria-current': selected ? 'true' : null, dataset: { id: p.id }, onclick: () => requestSelect(p.id),
+      'aria-current': selected ? 'true' : null, dataset: { key: 'p:' + p.id }, onclick: () => requestSelect(p.id),
     },
     h('span', { class: 'pr-item-main' },
       h('span', { class: 'pr-name' }, String(p.name || p.id)),
@@ -462,7 +473,7 @@ export function mount(root, ctx) {
   function draftItem() {
     const regs = S.parsed && isObj(S.parsed.registers) ? Object.keys(S.parsed.registers).length : null;
     return h('button', {
-      type: 'button', class: 'list-item pr-item selected', 'aria-current': 'true', onclick: scrollToDetail,
+      type: 'button', class: 'list-item pr-item selected', 'aria-current': 'true', dataset: { key: 'draft' }, onclick: scrollToDetail,
     },
     h('span', { class: 'pr-item-main' },
       h('span', { class: 'pr-name' }, currentName()),
@@ -728,7 +739,7 @@ export function mount(root, ctx) {
       ['address_offset', d.address_offset == null ? '0 (domyślnie)' : num(d.address_offset)],
       ['Port szeregowy', serialText(d.serial) || '-'],
       ['read.max_block / max_gap', `${dflt(read.max_block, DEFAULT_MAX_BLOCK)} / ${dflt(read.max_gap, DEFAULT_MAX_GAP)}`],
-      ['Rejestr rozpoznawania (probe)', d.probe ? String(d.probe) : '-'],
+      ['Rozpoznawanie (probe)', d.probe ? String(d.probe) : '-'],
     ];
     const rows = registerRows(d);
     const offset = Number.isInteger(d.address_offset) ? d.address_offset : 0;
@@ -755,6 +766,7 @@ export function mount(root, ctx) {
     const scaleText = (r) => {
       const parts = [];
       if (r.scale !== 1) parts.push(`× ${num(r.scale)}`);
+      if (r.scaleFrom) parts.push(r.scaleMode === 'multiply' ? `× [${r.scaleFrom}]` : `× 10^[${r.scaleFrom}]`);
       if (r.offset !== 0) parts.push(typeof r.offset === 'number' ? `${r.offset < 0 ? '-' : '+'} ${num(Math.abs(r.offset))}` : `+ ${r.offset}`);
       return parts.join(' ') || '-';
     };
@@ -771,7 +783,7 @@ export function mount(root, ctx) {
             h('td', null, r.label),
             h('td', { class: 'addr' + (bad ? ' err-text' : ''), title: bad ? 'nieprawidłowy adres' : fileNote }, bad ? '?' : String(r.address)),
             h('td', { class: 'mono muted nowrap' }, bad ? '-' : fmtHex(r.address)),
-            cell(r.func, 'nowrap'),
+            cell(r.func, 'mono nowrap'),
             cell(r.type, 'mono'),
             cell(r.order, 'mono'),
             h('td', { class: 'mono nowrap' }, scaleText(r)),
@@ -809,7 +821,9 @@ export function mount(root, ctx) {
       }
       escArmed = false;
     });
-    const formatBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm' }, 'Formatuj');
+    const formatBtn = h('button', {
+      type: 'button', class: 'btn btn-ghost btn-sm', title: 'Porządkuje pola i sortuje rejestry według adresu',
+    }, 'Formatuj');
     formatBtn.addEventListener('click', () => {
       const p = parseText(ta.value);
       if (!p.ok) { validateNow(); toast('Nie można sformatować - popraw błąd składni JSON', 'err'); gotoError(); return; }
@@ -832,7 +846,7 @@ export function mount(root, ctx) {
       h('div', { class: 'pr-ed-tools' },
         formatBtn, revertBtn,
         h('span', { class: 'muted small', id: hintId },
-          'Tab - wcięcie, Shift+Tab - cofnięcie wcięcia, Esc i Tab - wyjście z pola, Ctrl+S - zapis. Formatuj porządkuje pola i sortuje rejestry wg adresu.')),
+          'Tab - wcięcie (Shift+Tab cofa) · Esc, potem Tab - wyjście z pola · Ctrl+S - zapis')),
       ta, ed.val);
     updateDirtyUi();
   }
@@ -972,7 +986,8 @@ export function mount(root, ctx) {
     } else {
       content = h('div', { class: 'pr-val-row muted' }, 'Sprawdzanie...');
     }
-    fill(ed.val, v.pending ? h('span', { class: 'spinner pr-val-spin', 'aria-hidden': 'true' }) : null, content);
+    fill(ed.val, v.pending ? h('span', { class: 'spinner pr-val-spin', 'aria-hidden': 'true' }) : null,
+      h('div', { class: 'pr-val-body' }, content));
   }
 
   // ── operacje ──────────────────────────────────────────────
@@ -1340,6 +1355,16 @@ export function mount(root, ctx) {
   }
 
   return {
+    async canLeave() {
+      if (!isDirty() || allowNav) return true;
+      if (navDialog) return false;
+      navDialog = true;
+      const ok = await confirmDialog('Edytor presetu zawiera niezapisane zmiany. Odrzucić je i przejść dalej?',
+        { title: 'Niezapisane zmiany', okLabel: 'Odrzuć i przejdź' });
+      navDialog = false;
+      if (ok) allowNav = true;
+      return ok;
+    },
     unmount() {
       destroyed = true;
       ac.abort();
@@ -1368,7 +1393,7 @@ const PRESET_FIELDS = [
   ['phases', 'Liczba faz: 1, 2 lub 3 (domyślnie 3)', '3'],
   ['register_type', 'Domyślna funkcja odczytu: input (FC04) albo holding (FC03)', '"input"'],
   ['byte_order', 'Domyślna kolejność bajtów: ABCD, CDAB, BADC, DCBA (aliasy: big_endian, word_swap, byte_swap, little_endian)', '"ABCD"'],
-  ['data_type', 'Domyślny typ danych: int16, uint16, int32, uint32, float32, int64, uint64, float64', '"float32"'],
+  ['data_type', 'Domyślny typ danych: int8, uint8, int16, uint16, int32, uint32, float32, int64, uint64, float64', '"float32"'],
   ['address_offset', 'Dodawany do każdego adresu, np. -1 dla adresów 1-based z dokumentacji', '0'],
   ['serial', 'Fabryczne ustawienia portu RS-485 (informacyjnie)', '{"baudrate": 9600, "parity": "N", "stopbits": 1}'],
   ['read.max_block', `Maks. liczba rejestrów w jednym zapytaniu, 1-125 (domyślnie ${DEFAULT_MAX_BLOCK})`, '{"max_block": 64}'],
@@ -1386,6 +1411,8 @@ const REGISTER_FIELDS = [
   ['byte_order', 'Kolejność bajtów - nadpisuje domyślną', '"CDAB"'],
   ['register_type', 'Funkcja odczytu - nadpisuje domyślną', '"holding"'],
   ['scale, offset', 'Wartość fizyczna = surowa × scale + offset (scale nie może być 0)', '0.1, 0'],
+  ['scale_from', 'Klucz rejestru, którego wartość daje dodatkowy mnożnik 10^n (SunSpec scale factor, Gossen EnergyMID)', '"voltage_sf"'],
+  ['scale_from_mode', 'pow10 (domyślnie): mnożnik 10^wartość; multiply: mnożnik = wartość rejestru', '"multiply"'],
   ['invalid', 'Surowe wartości oznaczające "brak pomiaru" (np. w licznikach ABB)', '[65535]'],
 ];
 const BYTE_ORDER_EXAMPLE = [
@@ -1431,7 +1458,8 @@ function helpCard() {
       helpTable(['Pole', 'Znaczenie', 'Przykład'], PRESET_FIELDS),
       h('h3', null, 'Pola rejestru'),
       helpTable(['Pole', 'Znaczenie', 'Przykład'], REGISTER_FIELDS),
-      h('p', null, 'Typy danych zajmują: int16 i uint16 - 1 rejestr; int32, uint32 i float32 - 2 rejestry; int64, uint64 i float64 - 4 rejestry.'),
+      h('p', null, 'Typy danych zajmują: int8 i uint8 - połowę rejestru (młodszy bajt; przy BADC/DCBA starszy); int16 i uint16 - 1 rejestr; int32, uint32 i float32 - 2 rejestry; int64, uint64 i float64 - 4 rejestry.'),
+      h('p', null, 'Skala z innego rejestru: "scale_from": "klucz" mnoży wartość przez 10^(wartość wskazanego rejestru), np. mantysa 2309 i wykładnik -1 dają 230,9 V. Z "scale_from_mode": "multiply" mnożnikiem jest sama wartość rejestru.'),
       h('p', null, 'Grupy: ', GROUP_ORDER.map((g, i) => [i ? ', ' : '', h('code', null, g), ` (${GROUPS[g].label})`])),
       h('h3', null, 'Kolejność bajtów'),
       h('p', null, 'Wartości 32-bitowe zajmują dwa rejestry po 16 bitów, a producenci różnie układają w nich bajty. ',

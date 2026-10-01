@@ -88,6 +88,8 @@ def legacy_preset():
 
 # typ -> [(klucz, scale, offset)]; po jednym na każdą kolejność bajtów
 _POOLS = {
+    "int8": [("pf_l2", 0.01, 0), ("thd_v_l2", 0.1, 0), ("thd_i_l1", 0.2, 0), ("thd_i_avg", 0.2, 0)],
+    "uint8": [("thd_v_l3", 0.1, 0), ("thd_i_l3", 0.1, 0), ("current_l2", 0.1, 0), ("thd_v_avg", 0.1, 0)],
     "int16": [("voltage_l1", 0.1, 0), ("pf_l3", 0.001, 0), ("power_l3", 1, 0), ("thd_v_l1", 0.1, 0)],
     "uint16": [("voltage_l2", 0.1, 0), ("current_l1", 0.01, 0), ("frequency", 0.01, 0),
                ("temperature", 0.1, -40)],
@@ -643,3 +645,30 @@ def test_pymodbus_serial_client_against_pty():
         srv.stop()
         os.close(master)
         os.close(slave)
+
+
+def test_simulator_scale_from_registers_roundtrip():
+    from modbus_dash.planner import PresetReader
+    from modbus_dash.presets import normalize_preset
+    from modbus_dash.simulator import Physics, SimDevice
+    p = normalize_preset({"registers": {
+        "voltage_l1": {"address": 0, "type": "int16", "scale_from": "u_sf", "decimals": 2},
+        "power_total": {"address": 1, "type": "int16", "scale_from": "p_sf", "decimals": 0},
+        "u_sf": {"address": 2, "type": "int16"},
+        "p_sf": {"address": 3, "type": "int8"},
+        "energy_import": {"address": 4, "type": "uint32", "scale": 0.001, "scale_from": "e_fac",
+                          "scale_from_mode": "multiply", "decimals": 3},
+        "e_fac": {"address": 6, "type": "uint32"},
+    }})
+    dev = SimDevice(1, p)
+    q = Physics(seed=3).tick(now=500.0)
+    dev.update(q)
+
+    class Bus:
+        def read_registers(self, unit, function, address, count):
+            return dev.read(function, address, count)
+
+    res = PresetReader(p).read(Bus(), 1)
+    assert abs(res["values"]["voltage_l1"] - q["voltage_l1"]) < 0.02
+    assert abs(res["values"]["power_total"] - q["power_total"]) <= max(1.0, abs(q["power_total"]) * 1e-3)
+    assert abs(res["values"]["energy_import"] - q["energy_import"]) < 0.002

@@ -24,6 +24,12 @@ Format JSON (schemat 2, w pełni zgodny wstecz ze starym formatem):
     }
 
 Wartość fizyczna = surowa * scale + offset.
+
+Skala z innego rejestru (SunSpec "scale factor", Gossen EnergyMID):
+    "current_l1": {"address": 100, "type": "int16", "scale_from": "current_sf"}
+    "current_sf": {"address": 104, "type": "int16", "group": "other"}
+daje wartość = surowa * scale * 10^(wartość current_sf) + offset; z
+"scale_from_mode": "multiply" mnożnik to sama wartość wskazanego rejestru.
 """
 
 import json
@@ -53,6 +59,15 @@ MODBUS_MAX_REGS = 125
 
 PRESET_ID_RE = re.compile(r"^\w[\w .\-]{0,79}$", re.UNICODE)
 REGISTER_KEY_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.\-]{0,63}$")
+
+
+class PresetFileError(ValueError):
+    """Plik presetu istnieje, ale nie jest poprawnym JSON-em; .text zawiera jego treść."""
+
+    def __init__(self, preset_id, message, text):
+        super().__init__(f"plik presetu '{preset_id}' jest uszkodzony: {message}")
+        self.preset_id = preset_id
+        self.text = text
 
 
 class PresetError(ValueError):
@@ -190,6 +205,8 @@ def normalize_preset(data):
         if any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in invalid):
             errors.append(f"{where}: 'invalid' musi być liczbą lub listą liczb")
             invalid = []
+        # porównujemy jako float: JSON z przeglądarki gubi precyzję dużych liczb 64-bit
+        invalid = [float(x) for x in invalid]
         group = spec.get("group", "other")
         if not isinstance(group, str) or not group:
             group = "other"
@@ -201,12 +218,29 @@ def normalize_preset(data):
         if not isinstance(label, str):
             errors.append(f"{where}: 'label' musi być tekstem")
             label = str(key)
+        scale_from = spec.get("scale_from")
+        scale_mode = spec.get("scale_from_mode", "pow10")
+        if scale_from is not None and not isinstance(scale_from, str):
+            errors.append(f"{where}: 'scale_from' musi być kluczem innego rejestru")
+            scale_from = None
+        if scale_mode not in ("pow10", "multiply"):
+            errors.append(f"{where}: 'scale_from_mode' musi być 'pow10' lub 'multiply'")
+            scale_mode = "pow10"
         registers[key] = {
             "key": key, "address": address, "type": dtype, "order": order,
             "function": func, "count": count, "scale": scale, "offset": offset,
             "decimals": decimals, "unit": unit, "group": group, "label": label,
-            "invalid": invalid,
+            "invalid": invalid, "scale_from": scale_from, "scale_mode": scale_mode,
         }
+
+    for key, spec in registers.items():
+        src = spec["scale_from"]
+        if src is None:
+            continue
+        if src == key or src not in registers:
+            errors.append(f"rejestr '{key}': 'scale_from' wskazuje nieistniejący rejestr '{src}'")
+        elif registers[src]["scale_from"]:
+            errors.append(f"rejestr '{key}': rejestr skali '{src}' nie może sam mieć 'scale_from'")
 
     probe = data.get("probe")
     if probe is not None and probe not in registers:
@@ -332,9 +366,12 @@ class PresetStore:
         path, builtin = self._locate(preset_id)
         if not path:
             return None
-        raw, _ = self._load(path)
+        try:
+            raw, _ = self._load(path)
+        except ValueError as e:
+            raise PresetFileError(preset_id, str(e), path.read_text(encoding="utf-8", errors="replace")) from None
         if not isinstance(raw, dict):
-            return None
+            raise PresetFileError(preset_id, "oczekiwano obiektu JSON", path.read_text(encoding="utf-8", errors="replace"))
         return {**raw, "_id": preset_id, "_filename": preset_id, "_builtin": builtin}
 
     def get(self, preset_id):
@@ -342,7 +379,10 @@ class PresetStore:
         path, builtin = self._locate(preset_id)
         if not path:
             return None
-        _, norm = self._load(path)
+        try:
+            _, norm = self._load(path)
+        except ValueError as e:
+            raise PresetError([f"plik presetu jest uszkodzony: {e}"]) from None
         if isinstance(norm, PresetError):
             raise norm
         return {**norm, "id": preset_id, "builtin": builtin}

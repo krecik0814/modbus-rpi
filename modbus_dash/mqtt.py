@@ -77,6 +77,7 @@ class MqttPublisher:
         client.on_connect = self._on_connect
         client.on_disconnect = self._on_disconnect
         client.on_message = self._on_message
+        client.on_connect_fail = self._on_connect_fail
         client.reconnect_delay_set(min_delay=1, max_delay=60)
         self._client = client
         self._last_error = None
@@ -134,6 +135,11 @@ class MqttPublisher:
                 client.subscribe(f"{self._cfg['ha_prefix']}/status")
                 self._publish_discovery_all()
         log.info("MQTT: połączono z %s:%s", self._cfg["host"], self._cfg["port"])
+
+    def _on_connect_fail(self, client, userdata, *args):
+        cfg = self._cfg or {}
+        self._connected = False
+        self._last_error = f"nie można połączyć z brokerem {cfg.get('host')}:{cfg.get('port')}"
 
     def _on_disconnect(self, client, userdata, *args):
         self._connected = False

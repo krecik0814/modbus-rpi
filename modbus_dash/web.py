@@ -14,7 +14,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from . import __version__, metrics, mqtt, scanner
 from .config import ConfigError
 from .planner import PresetReader
-from .presets import PresetError, valid_id
+from .presets import PresetError, PresetFileError, valid_id
 from .transport import ModbusError, TransportConfig, list_serial_ports, pymodbus_version
 
 log = logging.getLogger("modbus-dash.web")
@@ -66,7 +66,9 @@ def create_app(ctx):
     """ctx: AppContext (patrz app.py) z polami config, presets, buses, poller, history,
     mqtt, jobs, simulator_info, options, base_dir."""
     app = Flask(__name__, static_folder=None)
-    app.config["JSON_SORT_KEYS"] = False
+    app.config["JSON_SORT_KEYS"] = False  # Flask < 2.3
+    if hasattr(app, "json") and hasattr(app.json, "sort_keys"):
+        app.json.sort_keys = False      # Flask >= 2.3 - kolejność pól presetu jak w pliku
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
     templates_dir = str(ctx.base_dir / "templates")
     static_dir = str(ctx.base_dir / "static")
@@ -111,6 +113,10 @@ def create_app(ctx):
     @app.errorhandler(PresetError)
     def _preset_error(e):
         return jsonify({"error": "preset niepoprawny", "errors": e.errors}), 400
+
+    @app.errorhandler(PresetFileError)
+    def _preset_file_error(e):
+        return jsonify({"error": str(e), "id": e.preset_id, "text": e.text}), 422
 
     @app.errorhandler(ConfigError)
     def _config_error(e):
@@ -288,8 +294,14 @@ def create_app(ctx):
     def api_buses():
         return jsonify([bus_entry(k, v) for k, v in ctx.config.get()["buses"].items()])
 
+    def _create_guard(kind, exists):
+        """?create=1 - tworzenie bez nadpisywania istniejącego elementu."""
+        if request.args.get("create") in ("1", "true") and exists:
+            raise ApiError(f"{kind} o takim identyfikatorze już istnieje", 409)
+
     @app.put("/api/buses/<bus_id>")
     def api_put_bus(bus_id):
+        _create_guard("magistrala", bus_id in ctx.config.get()["buses"])
         ctx.config.put_bus(bus_id, _body())
         return jsonify(bus_entry(bus_id, ctx.config.get()["buses"][bus_id]))
 
@@ -340,6 +352,7 @@ def create_app(ctx):
 
     @app.put("/api/devices/<dev_id>")
     def api_put_device(dev_id):
+        _create_guard("urządzenie", dev_id in ctx.config.get()["devices"])
         dev = ctx.config.put_device(dev_id, _body())
         return jsonify(device_entry(dev_id, dev))
 
@@ -570,13 +583,13 @@ def create_app(ctx):
 
     @app.get("/api/settings/history")
     def api_get_history():
-        return jsonify({"settings": ctx.config.get()["history"], "available": ctx.history is not None})
+        return jsonify({"settings": ctx.config.get()["history"],
+                        "available": not ctx.options.get("no_history"),
+                        "active": ctx.history is not None})
 
     @app.put("/api/settings/history")
     def api_put_history():
-        h = ctx.config.put_section("history", _body())
-        if ctx.history:
-            ctx.history.configure(h["bucket_seconds"], h["retention_days"])
+        ctx.config.put_section("history", _body())
         return api_get_history()
 
     return app

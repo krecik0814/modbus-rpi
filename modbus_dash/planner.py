@@ -64,15 +64,30 @@ def split_block(block, registers):
     return out
 
 
-def decode_value(spec, regs):
-    """Surowe rejestry -> wartość fizyczna (zaokrąglona) albo None."""
+def decode_value(spec, regs, factor=1.0):
+    """Surowe rejestry -> wartość fizyczna (zaokrąglona) albo None.
+
+    factor: dodatkowy mnożnik ze "scale_from" (np. 10^wykładnik z innego rejestru).
+    """
     raw = codec.decode(regs, spec["type"], spec["order"])
-    if spec.get("invalid") and raw in spec["invalid"]:
+    if spec.get("invalid") and float(raw) in spec["invalid"]:
         return None
-    v = codec.scaled(raw, spec["scale"], spec["offset"])
+    v = codec.scaled(raw, spec["scale"] * factor, spec["offset"])
     if v is None:
         return None
     return round(float(v), spec["decimals"])
+
+
+def scale_factor(spec, source_value):
+    """Mnożnik dla rejestru ze "scale_from" albo None, gdy rejestr skali nie ma wartości."""
+    if source_value is None:
+        return None
+    if spec.get("scale_mode") == "multiply":
+        return float(source_value)
+    try:
+        return 10.0 ** source_value
+    except OverflowError:
+        return None
 
 
 class PresetReader:
@@ -93,6 +108,7 @@ class PresetReader:
         t0 = time.monotonic()
         values = {k: None for k in self.registers}
         errors = {}
+        raw_regs = {}           # rejestry ze "scale_from" - dekodowane po rejestrach skali
         requests = 0
         new_blocks = []
         fatal = None
@@ -129,10 +145,23 @@ class PresetReader:
                 if len(chunk) < spec["count"]:
                     errors[k] = "za krótka odpowiedź"
                     continue
+                if spec.get("scale_from"):
+                    raw_regs[k] = chunk
+                    continue
                 try:
                     values[k] = decode_value(spec, chunk)
                 except (ValueError, OverflowError) as e:
                     errors[k] = str(e)
+        for k, chunk in raw_regs.items():
+            spec = self.registers[k]
+            factor = scale_factor(spec, values.get(spec["scale_from"]))
+            if factor is None:
+                errors[k] = f"brak wartości rejestru skali '{spec['scale_from']}'"
+                continue
+            try:
+                values[k] = decode_value(spec, chunk, factor)
+            except (ValueError, OverflowError) as e:
+                errors[k] = str(e)
         self.blocks = sorted(new_blocks, key=lambda b: (b.function, b.start))
         return {
             "values": values,

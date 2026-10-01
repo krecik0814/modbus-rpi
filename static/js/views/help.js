@@ -130,8 +130,8 @@ błąd bramki (brak ścieżki lub brak odpowiedzi urządzenia za bramką).</p>`;
 
 const TYPES = `
 <p>Rejestr Modbus ma 16 bitów. Wartości 32-bitowe zajmują dwa kolejne rejestry, 64-bitowe cztery. Obsługiwane typy:
-<code>int16</code>, <code>uint16</code>, <code>int32</code>, <code>uint32</code>, <code>float32</code>,
-<code>int64</code>, <code>uint64</code>, <code>float64</code>.</p>
+<code>int8</code>, <code>uint8</code> (połowa rejestru), <code>int16</code>, <code>uint16</code>, <code>int32</code>,
+<code>uint32</code>, <code>float32</code>, <code>int64</code>, <code>uint64</code>, <code>float64</code>.</p>
 <p>Standard nie określa, w jakiej kolejności producent układa bajty w kilku rejestrach. Przykład: <b>230,0 V</b>
 jako <code>float32</code> to bajty <code>43 66 00 00</code> (oznaczane A B C D):</p>
 <div class="table-wrap"><table class="tbl">
@@ -152,7 +152,13 @@ Wartość fizyczna = surowa × <code>scale</code> + <code>offset</code>:</p>
 <pre class="code">"voltage_l1":    {"address": 0,   "type": "uint16", "scale": 0.1,  "unit": "V"}     2301    -> 230,1 V
 "energy_import": {"address": 256, "type": "uint32", "scale": 0.01, "unit": "kWh"}   1234567 -> 12345,67 kWh</pre>
 <p><code>offset</code> przydaje się rzadko (np. temperatura przesunięta o -40). Pole <code>"invalid": [65535]</code>
-oznacza surowe wartości, które licznik zwraca zamiast "brak danych".</p>`;
+oznacza surowe wartości, które licznik zwraca zamiast "brak danych".</p>
+<h4>Skala z innego rejestru (SunSpec, Gossen EnergyMID)</h4>
+<p>Niektóre urządzenia podają mantysę i osobny rejestr z wykładnikiem (tzw. scale factor). Pole
+<code>"scale_from": "klucz"</code> mnoży wartość przez 10<sup>wartość wskazanego rejestru</sup>:</p>
+<pre class="code">"voltage_l1": {"address": 4,  "type": "int16", "scale_from": "u_exp", "unit": "V"}
+"u_exp":      {"address": 12, "type": "int8"}            mantysa 2309, wykładnik -1 -> 230,9 V</pre>
+<p>Z <code>"scale_from_mode": "multiply"</code> mnożnikiem jest sama wartość rejestru (np. współczynnik energii).</p>`;
 
 const ADDRESSES = `
 <p>W ramce Modbus adres to liczba 0-65535 liczona <b>od zera</b>. Dokumentacje liczników używają jednak różnych

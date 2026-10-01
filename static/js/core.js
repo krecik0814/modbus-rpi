@@ -242,13 +242,13 @@ function trapFocus(e, box) {
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }
 
-/** Okno potwierdzenia; zwraca Promise<boolean>. */
+/** Okno potwierdzenia (text: napis albo węzeł DOM); zwraca Promise<boolean>. */
 export function confirmDialog(text, { title = 'Potwierdź', okLabel = 'Usuń', danger = true } = {}) {
   return new Promise((resolve) => {
     let result = false;
     modal({
       title,
-      body: h('p', { style: { color: 'var(--text2)' } }, text),
+      body: text instanceof Node ? text : h('p', { style: { color: 'var(--text2)' } }, text),
       actions: [
         { label: 'Anuluj' },
         { label: okLabel, class: danger ? 'btn-danger' : 'btn-primary', onClick: (close) => { result = true; close(); } },
@@ -364,7 +364,7 @@ export function download(filename, text, mime = 'text/plain') {
 export function csvCell(v, sep = ';') {
   if (v == null) return '';
   let s = String(v);
-  if (/^[=+\-@]/.test(s) && Number.isNaN(Number(s))) s = "'" + s;
+  if (/^[=+\-@]/.test(s) && Number.isNaN(Number(s.replace(',', '.')))) s = "'" + s;
   return /[";\n\r]/.test(s) || s.includes(sep) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
@@ -415,4 +415,23 @@ export function emptyState(text, buttons = []) {
 /** Nagłówek strony widoku z akcjami. */
 export function pageHeader(title, ...actions) {
   return h('div', { class: 'page-header' }, h('h2', null, title), h('div', { class: 'actions' }, actions));
+}
+
+/**
+ * Wykonuje async fn z przyciskiem w stanie "zajęty" (spinner, disabled, aria-busy);
+ * ponowne kliknięcie w trakcie jest ignorowane. Zwraca wynik fn.
+ */
+export async function busy(btn, fn) {
+  if (!btn || btn.getAttribute('aria-busy') === 'true') return undefined;
+  const prev = [...btn.childNodes];
+  btn.setAttribute('aria-busy', 'true');
+  btn.disabled = true;
+  btn.prepend(h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' ');
+  try {
+    return await fn();
+  } finally {
+    btn.replaceChildren(...prev);
+    btn.disabled = false;
+    btn.removeAttribute('aria-busy');
+  }
 }
