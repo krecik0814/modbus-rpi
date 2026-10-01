@@ -8,7 +8,7 @@ Format JSON:
       "phases": 3,
       "register_type": "input",      # domyślna funkcja: input (FC04) | holding (FC03)
       "byte_order": "ABCD",          # domyślna kolejność: ABCD | CDAB | BADC | DCBA (+ aliasy)
-      "data_type": "float32",        # domyślny typ: int16 uint16 int32 uint32 float32 int64 uint64 float64
+      "data_type": "float32",        # domyślny typ: int8 uint8 int16 uint16 int32 uint32 float32 int64 uint64 float64
       "address_offset": 0,           # dodawany do adresów (np. -1 dla adresów 1-based z dokumentacji)
       "serial": {"baudrate": 9600, "parity": "N", "stopbits": 1},   # ustawienia fabryczne (informacyjnie)
       "read": {"max_block": 64, "max_gap": 10},                     # planowanie odczytów
@@ -326,7 +326,7 @@ class PresetStore:
             norm = normalize_preset(raw)
         except PresetError as e:
             norm = e
-        except Exception as e:  # noqa: BLE001 - jeden zły plik nie może zepsuć listy presetów
+        except Exception as e:  # jeden zły plik nie może zepsuć listy presetów
             norm = PresetError([f"błąd walidacji: {e}"])
         with self._lock:
             self._cache[path] = (mtime, raw, norm)
@@ -351,6 +351,9 @@ class PresetStore:
                                     "errors": ["nieprawidłowy plik JSON"], "register_count": 0}
                     continue
                 if not isinstance(raw, dict):
+                    seen[f.stem] = {"id": f.stem, "_filename": f.stem, "name": f.stem,
+                                    "builtin": builtin, "valid": False,
+                                    "errors": ["plik nie zawiera obiektu JSON"], "register_count": 0}
                     continue
                 overrides = (not builtin) and f.stem in seen and seen[f.stem].get("builtin")
                 seen[f.stem] = {

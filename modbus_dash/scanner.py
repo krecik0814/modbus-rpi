@@ -55,7 +55,7 @@ def read_range(bus, unit, function, start, end):
                 vals = bus.read_bits(unit, function, addr, count)
             else:
                 vals = bus.read_registers(unit, function, addr, count)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             if _fatal(e):
                 error = str(e)
                 break
@@ -135,7 +135,7 @@ def scan_units(job, bus, first, last, function, address, count, timeout):
             try:
                 regs = bus.read_registers(unit, function, address, count)
                 entry.update(ok=True, registers=regs)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 kind = getattr(e, "kind", "io")
                 if kind == "exception":
                     # odpowiedź wyjątkiem też oznacza, że urządzenie istnieje
@@ -158,7 +158,7 @@ def _alive(bus, unit):
         try:
             bus.read_registers(unit, func, 0, 1)
             return True, None
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             kind = getattr(e, "kind", "io")
             if kind == "exception":
                 return True, None
@@ -198,7 +198,7 @@ def detect_preset(job, bus, unit, store, timeout=None):
         try:
             with bus.override(timeout=timeout, retries=0) if timeout else contextlib.nullcontext():
                 res = PresetReader(sub).read(bus, unit)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             res = {"values": {}, "errors": {"*": str(e)}, "ok": False}
         score = heuristics.plausibility(res["values"], sub) if res["ok"] else 0.0
         ranked.append({
@@ -279,7 +279,7 @@ class JobManager:
                 fn(job, *args)
                 if job.state == "running":  # funkcja nie zakończyła zadania sama
                     job.finish(job.result)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 job.fail(str(e) or e.__class__.__name__)
 
         threading.Thread(target=run, name=f"job-{job.id}", daemon=True).start()

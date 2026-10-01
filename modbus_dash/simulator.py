@@ -162,9 +162,9 @@ class Physics:
             cur = self.appliances[k] = (amps, pf, t + self.rng.uniform(lo, hi))
         return (cur[0], cur[1]) if cur else (0.0, 1.0)
 
-    def tick(self, now=None):
-        """Krok symulacji; now - czas w sekundach (domyślnie time.monotonic())."""
-        now = time.monotonic() if now is None else float(now)
+    def tick(self):
+        """Krok symulacji (czas z time.monotonic())."""
+        now = time.monotonic()
         if self.t0 is None:
             self.t0 = self.last = now
         dt = min(max(0.0, now - self.last), 3600.0)
@@ -443,12 +443,6 @@ class SimDevice:
             self._store(sspec, codec.unscaled(exp, sspec["scale"], sspec["offset"]), new)
         return factors
 
-    def read(self, function, address, count):
-        """Bezpośredni odczyt obrazu rejestrów (bez kontroli strict)."""
-        with self.lock:
-            img = self._regs[function]
-            return [img.get(a, 0) for a in range(address, address + count)]
-
     # ── obsługa PDU ────────────────────────────────────────────
     def handle_pdu(self, pdu):
         """Zapytanie PDU (kod funkcji + dane) -> odpowiedź PDU (także wyjątek)."""
@@ -607,8 +601,6 @@ class SimDevice:
 class _SimBase:
     """Rejestr urządzeń + przetwarzanie zapytań (wspólne dla TCP i portu szeregowego)."""
 
-    framing = "rtu"
-
     def __init__(self, devices=None):
         self.devices = devices if devices is not None else {}  # unit -> SimDevice
         self.response_delay = 0.0  # s, opóźnienie odpowiedzi (wolny licznik, --delay)
@@ -617,11 +609,13 @@ class _SimBase:
     def add_device(self, dev):
         self.devices[dev.unit] = dev
 
-    def process_pdu(self, unit, pdu, tcp=None):
-        """Zapytanie PDU dla urządzenia unit -> odpowiedź PDU albo None (brak odpowiedzi)."""
+    def process_pdu(self, unit, pdu, tcp):
+        """Zapytanie PDU dla urządzenia unit -> odpowiedź PDU albo None (brak odpowiedzi).
+
+        tcp: ramka Modbus TCP (Unit ID 0/255 = pierwsze urządzenie, błędy bramki) albo RTU.
+        """
         if not pdu:
             return None
-        tcp = (self.framing == "tcp") if tcp is None else tcp
         dev = self.devices.get(unit)
         if dev is None:
             if not tcp and unit == 0:
@@ -721,16 +715,15 @@ class _TcpServer6(_TcpServer):
 class SimServer(_SimBase):
     """Serwer Modbus TCP (framing="tcp") albo RTU over TCP (framing="rtu").
 
-    gateway_errors=True: zapytanie do nieznanego urządzenia (TCP) dostaje
+    Atrybut gateway_errors=True: zapytanie do nieznanego urządzenia (TCP) dostaje
     wyjątek 0x0B zamiast ciszy - jak bramka TCP/RTU.
     """
 
-    def __init__(self, host="0.0.0.0", port=5020, framing="tcp", gateway_errors=False, devices=None):
+    def __init__(self, host="0.0.0.0", port=5020, framing="tcp"):
         if framing not in ("tcp", "rtu"):
             raise ValueError(f"nieznany rodzaj ramek: {framing!r} (tcp/rtu)")
-        super().__init__(devices)
+        super().__init__()
         self.host, self.port, self.framing = host, int(port), framing
-        self.gateway_errors = gateway_errors
         self._srv = None
         self._thread = None
         self._conns = set()
@@ -875,7 +868,7 @@ class _SerialIO:
 class SerialSimServer(_SimBase):
     """Slave Modbus RTU na porcie szeregowym (pyserial) albo deskryptorze pty.
 
-    port: ścieżka ("/dev/ttyUSB0", "COM5", "/dev/pts/3", URL pyserial "loop://")
+    port: ścieżka ("/dev/ttyUSB0", "COM5", "/dev/pts/3"), URL pyserial (np. "rfc2217://host:port")
     albo int - otwarty deskryptor (np. master z make_pty()).
     devices: słownik urządzeń współdzielony np. z SimServer.
     """
@@ -912,7 +905,7 @@ class SerialSimServer(_SimBase):
         try:
             self._rtu_loop(io.read, io.write, self.gap, 0.2, lambda: self._running,
                            max(self.gap, 0.05))
-        except Exception as e:  # noqa: BLE001 - wątek nie może zginąć po cichu
+        except Exception as e:  # wątek nie może zginąć po cichu
             if self._running:
                 log.error("Symulator RTU: %s", e)
 
@@ -931,7 +924,7 @@ def make_pty():
     """Para pseudoterminali w trybie raw: (master_fd, slave_fd, ścieżka_slave). Tylko POSIX.
 
     Symulator na master_fd (SerialSimServer(master_fd)), klient RTU na ścieżce
-    slave. slave_fd trzeba trzymać otwarty do końca testu (potem os.close obu).
+    slave. slave_fd trzeba trzymać otwarty, dopóki symulator działa (potem os.close obu).
     """
     import tty
     master, slave = os.openpty()
@@ -945,10 +938,10 @@ def make_pty():
 class Simulator:
     """Fizyka + serwer + wątek aktualizujący rejestry co interval sekund."""
 
-    def __init__(self, host="0.0.0.0", port=5020, framing="tcp", interval=1.0, seed=None):
+    def __init__(self, host="0.0.0.0", port=5020, framing="tcp", seed=None):
         self.physics = Physics(seed)
         self.server = SimServer(host, port, framing)
-        self.interval = float(interval)
+        self.interval = 1.0
         self._serial = []
         self._stop = threading.Event()
         self._thread = None
@@ -973,7 +966,7 @@ class Simulator:
         while not self._stop.wait(self.interval):
             try:
                 self.update()
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 log.error("Symulator: %s", e)
 
     def start(self, tcp=True):
@@ -1011,17 +1004,19 @@ def main(argv=None):
     ap.add_argument("--host", default="0.0.0.0", help="adres nasłuchu TCP (domyślnie 0.0.0.0)")
     ap.add_argument("--port", type=int, default=5020, help="port TCP (domyślnie 5020, 0 = bez TCP)")
     ap.add_argument("--framing", choices=("tcp", "rtu"), default="tcp",
-                    help="ramki na TCP: tcp (MBAP) albo rtu (RTU over TCP)")
+                    help="ramki na TCP: tcp (MBAP) albo rtu (RTU over TCP) (domyślnie tcp)")
     ap.add_argument("--preset", action="append", default=[],
-                    help="plik lub identyfikator presetu (można powtarzać; adresy kolejno od --unit)")
+                    help="plik lub identyfikator presetu (można powtarzać; adresy kolejno od --unit; "
+                         "domyślnie simulator_3f)")
     ap.add_argument("--unit", type=int, default=1, help="adres pierwszego urządzenia (domyślnie 1)")
     ap.add_argument("--strict", action="store_true", help="wyjątek 02 dla adresów spoza presetu")
-    ap.add_argument("--serial", help="port szeregowy dla slave RTU (np. /dev/ttyUSB0, COM5)")
-    ap.add_argument("--baudrate", type=int, default=9600)
-    ap.add_argument("--parity", choices=("N", "E", "O"), default="N")
-    ap.add_argument("--stopbits", type=int, choices=(1, 2), default=1)
+    ap.add_argument("--serial", metavar="PORT", help="port szeregowy dla slave RTU (np. /dev/ttyUSB0, COM5)")
+    ap.add_argument("--baudrate", type=int, default=9600, help="prędkość portu szeregowego [bit/s] (domyślnie 9600)")
+    ap.add_argument("--parity", choices=("N", "E", "O"), default="N",
+                    help="parzystość: N (brak), E (parzysta), O (nieparzysta) (domyślnie N)")
+    ap.add_argument("--stopbits", type=int, choices=(1, 2), default=1, help="bity stopu (domyślnie 1)")
     ap.add_argument("--pty", action="store_true",
-                    help="wirtualny port szeregowy (Linux/macOS): wypisuje ścieżkę do użycia jako --serial")
+                    help="wirtualny port szeregowy (Linux/macOS): wypisuje ścieżkę do podania w app.py --serial")
     ap.add_argument("--delay", type=int, default=0, metavar="MS", help="opóźnienie każdej odpowiedzi (wolny licznik)")
     ap.add_argument("--gateway-errors", action="store_true",
                     help="TCP: zapytanie do nieznanego Unit ID dostaje wyjątek 0x0B, jak z bramki")
@@ -1040,12 +1035,17 @@ def main(argv=None):
         raise SystemExit("--pty działa tylko w systemach POSIX (Linux, macOS)")
     if not 0 <= args.delay <= 60000:
         raise SystemExit("--delay: 0-60000 ms")
+    if not args.port and not (args.serial or args.pty):
+        raise SystemExit("--port 0 wymaga --serial albo --pty")
     sim = Simulator(args.host, args.port, args.framing, seed=args.seed)
     sim.server.gateway_errors = args.gateway_errors
     for i, name in enumerate(args.preset or ["simulator_3f"]):
         p = find(name)
-        raw = json.loads(p.read_text(encoding="utf-8"))
-        sim.add_preset(args.unit + i, normalize_preset(raw), strict=args.strict)
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+            sim.add_preset(args.unit + i, normalize_preset(raw), strict=args.strict)
+        except (OSError, ValueError) as e:  # PresetError, zły JSON, Unit ID spoza zakresu
+            raise SystemExit(f"Preset {name}: {e}") from None
         log.info("Urządzenie %d: %s", args.unit + i, raw.get("name") or p)
     sim.start(tcp=bool(args.port))
     servers, pty_fds = [sim.server], []
@@ -1055,8 +1055,10 @@ def main(argv=None):
         master, slave, path = make_pty()
         pty_fds = [master, slave]  # slave otwarty do końca - inaczej druga strona dostaje błędy
         servers.append(sim.serve_serial(master, args.baudrate, args.parity, args.stopbits))
-        log.info("Wirtualny port szeregowy: %s (np. python app.py --serial %s --baudrate %d --parity %s)",
-                 path, path, args.baudrate, args.parity)
+        first = Path((args.preset or ["simulator_3f"])[0]).stem
+        log.info("Wirtualny port szeregowy: %s (np. python app.py --serial %s --baudrate %d --parity %s "
+                 "--stopbits %d --preset %s --unit %d)",
+                 path, path, args.baudrate, args.parity, args.stopbits, first, args.unit)
     for srv in servers:
         srv.response_delay = args.delay / 1000.0
     try:

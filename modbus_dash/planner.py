@@ -156,7 +156,7 @@ class PresetReader:
         st.requests += 1
         try:
             regs = bus.read_registers(unit, block.function, block.start, block.count)
-        except Exception as e:  # noqa: BLE001 - ModbusError i błędy transportu
+        except Exception as e:  # ModbusError i błędy transportu
             kind = getattr(e, "kind", "io")
             code = getattr(e, "code", None)
             if kind == "exception" and code not in _TRANSIENT_CODES and len(block.keys) > 1 \

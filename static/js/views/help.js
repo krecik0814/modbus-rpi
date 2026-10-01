@@ -10,7 +10,7 @@ import {
 const START = `
 <ol>
   <li><b>Instalacja:</b> <code>python3 -m venv .venv</code>, <code>source .venv/bin/activate</code> (Windows:
-    <code>.venv\Scripts\activate</code>), potem <code>pip install -r requirements.txt</code>. Na Raspberry Pi najwygodniej uruchomić
+    <code>.venv\\Scripts\\activate</code>), potem <code>pip install -r requirements.txt</code>. Na Raspberry Pi najwygodniej uruchomić
     <code>bash deploy/install-rpi.sh</code> - skrypt tworzy środowisko <code>.venv</code>, dodaje użytkownika do grupy
     <code>dialout</code> i instaluje usługę systemd.</li>
   <li><b>Próba bez sprzętu:</b> <code>python app.py</code> uruchamia wbudowany symulator licznika 3-fazowego
@@ -69,8 +69,8 @@ sudo reboot
 ls -l /dev/serial0        # sprawdź, na który port wskazuje alias</pre>
 <ul>
   <li><b><code>/dev/serial0</code></b> na RPi 3, 4 i Zero wskazuje UART pinów GPIO - używaj go w <code>--serial</code>
-    i w zakładce Połączenia. Na RPi 5 <code>serial0</code> wskazuje złącze debug (<code>ttyAMA10</code>), więc tam podaj
-    <code>/dev/ttyAMA0</code>.</li>
+    i w zakładce Połączenia. Na RPi 5 <code>serial0</code> może wskazywać złącze debug (<code>ttyAMA10</code>), dlatego tam
+    podawaj wprost <code>/dev/ttyAMA0</code>.</li>
   <li><b>RPi 3, 4, Zero W, Zero 2 W:</b> pełny UART (PL011, <code>/dev/ttyAMA0</code>) obsługuje domyślnie Bluetooth,
     a <code>serial0</code> wskazuje na mini-UART (<code>/dev/ttyS0</code>). <b>Mini-UART nie obsługuje parzystości
     ani 2 bitów stopu</b> (jądro po cichu przełącza go na 8N1), więc liczniki 8E1 (np. Orno) nie odpowiedzą - aplikacja
@@ -524,7 +524,7 @@ function metersSection(ctx, signal, alive) {
 
   const el = h('div', { class: 'help-meters' },
     h('p', null, 'Liczniki z wbudowanej biblioteki presetów (', h('code', null, 'presets/library'),
-      '). Ustawienia portu to wartości fabryczne z dokumentacji - licznik mógł zostać przestawiony, a puste pole oznacza, że trzeba je sprawdzić w menu licznika. Przycisk ',
+      '). Ustawienia portu to wartości fabryczne z dokumentacji - licznik mógł zostać przestawiony, a „-” oznacza, że dokumentacja ich nie podaje i trzeba je sprawdzić w menu licznika. Przycisk ',
       h('i', null, 'Dodaj'), ' otwiera formularz nowego urządzenia z wybranym presetem.'),
     h('div', { class: 'toolbar help-meter-bar' },
       h('div', { class: 'field' }, h('label', { for: search.id }, 'Szukaj licznika'), search),

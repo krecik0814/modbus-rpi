@@ -34,7 +34,6 @@ z nakładką RS-485, adaptera USB-RS485 albo bramki Ethernet. Bez chmury, bez ze
 15. [Rozwiązywanie problemów](#rozwiązywanie-problemów)
 16. [API REST](#api-rest)
 17. [Architektura](#architektura)
-18. [Zmiany w wersji 3](#zmiany-w-wersji-3)
 
 ---
 
@@ -69,7 +68,7 @@ Nie znasz parametrów licznika? Uruchom z samym `--serial ...`, wejdź w **Skane
 |--------|--------|-------|
 | Python | 3.10+ | |
 | Flask | 2.2+ | |
-| pymodbus | 3.6 - 3.15 (testowane wszystkie) | |
+| pymodbus | 3.6+ (sprawdzone 3.6 - 3.15) | |
 | pyserial | 3.4+ | tylko RS-485 / port szeregowy |
 | paho-mqtt | 1.6+ / 2.x | opcjonalnie - MQTT / Home Assistant |
 | waitress | 2.1+ | opcjonalnie - wydajniejszy serwer HTTP (używany automatycznie, gdy jest zainstalowany) |
@@ -130,7 +129,7 @@ w interfejsie oznaczona jako zablokowana). Bez flag magistrale i urządzenia kon
 | `--presets-dir` | katalog presetów użytkownika | `<katalog aplikacji>/presets` |
 | `--no-history` | bez historii w SQLite | |
 | `--debug` | tryb debug Flask (wymusza nasłuch na 127.0.0.1) | |
-| `--log-level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` | `INFO` |
+| `--log-level` | `DEBUG` / `INFO` / `WARNING` / `ERROR`; logi biblioteki pymodbus włącza zmienna `MODBUS_DASH_PYMODBUS_LOG=DEBUG` | `INFO` |
 | `--serial PORT` | port RS-485: `/dev/serial0`, `/dev/ttyUSB0`, `COM3` | |
 | `--baudrate` | prędkość transmisji | `9600` |
 | `--parity` | `N` / `E` / `O` | `N` |
@@ -149,12 +148,12 @@ w interfejsie oznaczona jako zablokowana). Bez flag magistrale i urządzenia kon
 | `--no-sim` | nie uruchamiaj symulatora | |
 | `--sim` | uruchom symulator także przy `--serial` / `--tcp` / `--rtu-over-tcp` | |
 | `--modbus-port` | port TCP symulatora | `5020` |
-| `--sim-preset ID[:UNIT]` | dodatkowy licznik w symulatorze (można powtarzać) | |
+| `--sim-preset ID[:UNIT]` | dodatkowy licznik w symulatorze (można powtarzać; Unit ID domyślnie 2, każdy licznik inny; 1 to Symulator 3F) | |
 | `--sim-framing` | `tcp` albo `rtu` (RTU-over-TCP) | `tcp` |
 | `--sim-strict` | symulator zwraca wyjątek 02 dla niezmapowanych adresów | |
 
-Flagi `--serial`, `--tcp` i `--rtu-over-tcp` automatycznie wyłączają symulator (jak w poprzednich wersjach);
-dodaj `--sim`, jeśli chcesz go mimo to uruchomić.
+Flagi `--serial`, `--tcp` i `--rtu-over-tcp` automatycznie wyłączają symulator; dodaj `--sim`, jeśli chcesz go mimo to
+uruchomić.
 
 ## Interfejs webowy
 
@@ -193,6 +192,8 @@ ustawiony interwał), żeby nie blokować innych urządzeń.
 
 Preset to plik JSON z mapą rejestrów. Wbudowane leżą w `presets/library/` (tylko do odczytu), własne w `presets/`.
 Stary format (v2 i wcześniejsze wersje aplikacji) jest nadal obsługiwany - wszystkie nowe pola są opcjonalne.
+Wyjątek: `"byte_order": "little_endian"` oznacza teraz pełne odwrócenie bajtów (DCBA); w wersji 2 działał jak
+`word_swap`, więc preset, który wtedy dawał poprawne wartości, wymaga `word_swap` (CDAB).
 
 ```json
 {
@@ -221,9 +222,12 @@ Stary format (v2 i wcześniejsze wersje aplikacji) jest nadal obsługiwany - wsz
 
 | Pole | Opis |
 |------|------|
-| `register_type` | domyślna funkcja: `input` (FC04) lub `holding` (FC03); każdy rejestr może ją nadpisać |
-| `data_type` / `type` | `int8`, `uint8` (połowa rejestru), `int16`, `uint16`, `int32`, `uint32`, `float32`, `int64`, `uint64`, `float64` |
-| `byte_order` | `ABCD` (big-endian), `CDAB` (word swap), `BADC` (byte swap), `DCBA` (little-endian); aliasy `big_endian`, `word_swap`, `byte_swap`, `little_endian` |
+| `name`, `manufacturer`, `model`, `description`, `source` | opis presetu (lista presetów, tabela liczników); `source` - skąd pochodzi mapa rejestrów |
+| `phases` | liczba faz: 1, 2 lub 3 (domyślnie 3) |
+| `serial` | fabryczne ustawienia portu (`baudrate`, `bytesize`, `parity`, `stopbits`) - tylko informacyjnie (kolumna *Port (fabr.)*, ostrzeżenie w formularzu urządzenia); parametry połączenia ustawiasz w magistrali |
+| `register_type` | domyślna funkcja: `input` (FC04, domyślnie) lub `holding` (FC03); każdy rejestr może ją nadpisać |
+| `data_type` / `type` | `int8`, `uint8` (połowa rejestru), `int16`, `uint16`, `int32`, `uint32`, `float32`, `int64`, `uint64`, `float64` (domyślnie `float32`) |
+| `byte_order` | `ABCD` (big-endian), `CDAB` (word swap), `BADC` (byte swap), `DCBA` (little-endian); aliasy `big_endian`, `word_swap`, `byte_swap`, `little_endian` (domyślnie `ABCD`) |
 | `address` | adres protokołu liczony od 0, liczba lub napis `"0x0156"` |
 | `address_offset` | dodawany do każdego adresu - np. `-1`, gdy przepisujesz adresy z dokumentacji liczone od 1, albo `-30001` / `-40001` dla notacji 3xxxx / 4xxxx |
 | `scale`, `offset` | wartość = surowa × `scale` + `offset` (np. `0.1` dla napięcia w 0.1 V, `1000` dla mocy w kW → W) |
@@ -372,7 +376,7 @@ Metryki: `modbus_dash_value{device,device_name,key,label,unit,group}`, `modbus_d
 
 Własny serwer Modbus (niezależny od zmian API pymodbus) z modelem instalacji 3-fazowej: napięcia z dryfem i szumem,
 zmienne obciążenia, fotowoltaika na L3 (ujemna moc i energia oddana), prąd neutralny jako suma wektorowa, THD,
-energia narastająca w czasie. Obsługuje FC 01-06, 15, 16, 17, 43/14 (identyfikacja urządzenia).
+energia narastająca w czasie. Obsługuje FC 01-06, 08 (tylko echo, podfunkcja 00), 15, 16, 17, 43/14 (identyfikacja urządzenia).
 
 ```bash
 python app.py --sim-preset eastron_sdm630:2 --sim-preset carlo_gavazzi_em24:3   # dodatkowe liczniki
@@ -382,7 +386,7 @@ python -m modbus_dash.simulator --help                                          
 
 Samodzielny symulator potrafi też udawać licznik na porcie szeregowym, także bez sprzętu: `--pty` tworzy wirtualny
 port (Linux, macOS) i wypisuje jego ścieżkę, którą podajesz dashboardowi jako `--serial`. `--delay MS` spowalnia
-odpowiedzi (wolny licznik), a `--gateway-errors` odpowiada na nieznany Unit ID wyjątkiem 0x0B, jak bramka.
+odpowiedzi (wolny licznik), a `--gateway-errors` (tylko Modbus TCP, `--framing tcp`) odpowiada na nieznany Unit ID wyjątkiem 0x0B, jak bramka.
 
 ```bash
 python -m modbus_dash.simulator --port 0 --pty --preset eastron_sdm120   # "Wirtualny port szeregowy: /dev/pts/3"
@@ -474,7 +478,7 @@ Licznik            Nakładka RS-485             Raspberry Pi
 
 ## API REST
 
-Wszystkie odpowiedzi w JSON; błędy jako `{"error": "..."}` z kodem 4xx/5xx.
+Odpowiedzi w JSON (oprócz eksportu CSV i `/metrics`); błędy jako `{"error": "..."}` z kodem 4xx/5xx.
 
 | Endpoint | Metoda | Opis |
 |----------|--------|------|
@@ -516,12 +520,12 @@ curl -s http://raspberrypi.local:5000/api/devices/cli/values | jq .values
                 │ REST (JSON)
 ┌───────────────┴──────────── app.py / modbus_dash ─────────────┐
 │ web.py (Flask) ── scanner.py (skan, Unit ID, rozpoznawanie)   │
-│      │                                                         │
-│ poller.py (wątek na magistralę) ── history.py (SQLite)         │
-│      │                          ├─ mqtt.py (MQTT / HA)          │
-│      │                          └─ metrics.py (Prometheus)      │
-│ planner.py (bloki odczytu) ── codec.py (typy, kolejność bajtów)│
-│ transport.py (Bus: RTU / ASCII / TCP / RTU-over-TCP / UDP)     │
+│      │                                                        │
+│ poller.py (wątek na magistralę) ── history.py (SQLite)        │
+│      │                          ├─ mqtt.py (MQTT / HA)        │
+│      │                          └─ metrics.py (Prometheus)    │
+│ planner.py (bloki) ── codec.py (typy, kolejność bajtów)       │
+│ transport.py (Bus: RTU / ASCII / TCP / RTU-over-TCP / UDP)    │
 └──────────┬───────────────────────────┬────────────────────────┘
       RS-485 / USB                 TCP :502 / bramka
       (liczniki)                   simulator.py :5020
@@ -543,19 +547,3 @@ curl -s http://raspberrypi.local:5000/api/devices/cli/values | jq .values
 | `simulator.py` | serwer Modbus TCP / RTU-over-TCP / RTU (port szeregowy) z modelem fizycznym |
 | `config.py` | `data/config.json`: magistrale, urządzenia, MQTT, historia |
 | `web.py` | aplikacja Flask: interfejs i REST API |
-
-## Zmiany w wersji 3
-
-Najważniejsze naprawione błędy wersji 2:
-
-- aplikacja nie startowała z pymodbus ≥ 3.13 (zmiana API serwera) - symulator ma teraz własny serwer Modbus;
-- skaner nigdy nie rozpoznawał częstotliwości, cos φ ani THD (kolejność progów), a energię oznaczał jako moc;
-- dekoder `little_endian` działał identycznie jak `word_swap`;
-- `/api/live` czytał cały preset jednym zapytaniem - nie działał dla map > 125 rejestrów ani z dziurami;
-- skan przerywał się na pierwszym odrzuconym bloku i używał bloków odrzucanych przez liczniki Eastron;
-- każdy odczyt otwierał port szeregowy od nowa; równoległe zapytania (dashboard + skaner) kończyły się błędem;
-- wyjątki pymodbus (timeout) dawały błąd 500 w HTML, a dashboard „zawieszał się" bez komunikatu;
-- `/api/ping` zgłaszał sukces bez żadnej wymiany Modbus;
-- XSS przez nazwy/etykiety presetów, path traversal w nazwie presetu, brak ochrony CSRF, debugger dostępny w sieci;
-- edycja presetu o nietypowej nazwie tworzyła duplikat, nowy preset mógł nadpisać istniejący;
-- symulator: energia rosła 3.6× za szybko, energia oddana się nie zmieniała, zły prąd neutralny.

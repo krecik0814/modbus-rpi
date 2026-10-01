@@ -27,9 +27,12 @@ class _PolishDefaults(argparse.HelpFormatter):
     def _get_help_string(self, action):
         text = action.help or ""
         default = action.default
-        if (action.dest == "auth" or default in (None, False, [], argparse.SUPPRESS)
-                or "%(default)" in text or not action.option_strings):
+        # "is" zamiast "in": 0 == False, a domyślne 0 (np. --delay-ms) ma być widoczne
+        if (action.dest == "auth" or default is None or default is False or default == []
+                or default is argparse.SUPPRESS or "%(default)" in text or not action.option_strings):
             return text
+        if isinstance(default, list):
+            return f"{text} (domyślnie: {', '.join(map(str, default))})"
         return f"{text} (domyślnie: %(default)s)"
 
 
@@ -39,7 +42,7 @@ def parse_args(argv=None):
         formatter_class=_PolishDefaults)
     g = p.add_argument_group("serwer WWW")
     g.add_argument("--host", default="0.0.0.0", help="adres nasłuchu HTTP (127.0.0.1 = tylko lokalnie)")
-    g.add_argument("--port", type=int, default=5000, help="port HTTP dashboardu")
+    g.add_argument("--port", type=_tcp_port, default=5000, help="port HTTP dashboardu")
     g.add_argument("--auth", default=os.environ.get("MODBUS_DASH_AUTH"), metavar="USER:HASŁO",
                    help="włącz logowanie HTTP Basic (lub zmienna MODBUS_DASH_AUTH)")
     g.add_argument("--allow-write", action="store_true", help="zezwól na zapis rejestrów/cewek z interfejsu")
@@ -53,12 +56,12 @@ def parse_args(argv=None):
     g.add_argument("--no-history", action="store_true", help="nie zapisuj historii w SQLite")
     g.add_argument("--debug", action="store_true", help="tryb debug Flask (tylko lokalnie!)")
     g.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                   help="poziom komunikatów w logu")
+                   help="poziom komunikatów w logu (logi biblioteki pymodbus: zmienna MODBUS_DASH_PYMODBUS_LOG=DEBUG)")
 
     g = p.add_argument_group("połączenie Modbus ('default')")
     g.add_argument("--serial", metavar="PORT", help="port RS-485, np. /dev/serial0, /dev/ttyUSB0, COM3")
     g.add_argument("--baudrate", type=int, default=9600, help="prędkość portu szeregowego [bit/s]")
-    g.add_argument("--parity", default="N", choices=["N", "E", "O"], help="parzystość: N (brak), E (parzysta), O")
+    g.add_argument("--parity", default="N", choices=["N", "E", "O"], help="parzystość: N (brak), E (parzysta), O (nieparzysta)")
     g.add_argument("--stopbits", type=int, default=1, choices=[1, 2], help="bity stopu")
     g.add_argument("--bytesize", type=int, default=8, choices=[7, 8], help="bity danych")
     g.add_argument("--framer", default="rtu", choices=["rtu", "ascii"], help="ramkowanie na porcie szeregowym")
@@ -78,9 +81,10 @@ def parse_args(argv=None):
     g.add_argument("--no-sim", action="store_true", help="nie uruchamiaj symulatora")
     g.add_argument("--sim", action="store_true",
                    help="uruchom symulator także przy --serial/--tcp/--rtu-over-tcp (domyślnie wtedy wyłączony)")
-    g.add_argument("--modbus-port", type=int, default=5020, help="port TCP symulatora")
+    g.add_argument("--modbus-port", type=_tcp_port, default=5020, help="port TCP symulatora")
     g.add_argument("--sim-preset", action="append", default=[], metavar="PRESET[:UNIT]",
-                   help="dodatkowe urządzenie w symulatorze (można powtarzać), np. eastron_sdm120:2")
+                   help="dodatkowe urządzenie w symulatorze (można powtarzać; bez :UNIT - Unit ID 2), "
+                        "np. eastron_sdm120:2")
     g.add_argument("--sim-framing", default="tcp", choices=["tcp", "rtu"],
                    help="ramkowanie symulatora: Modbus TCP albo RTU-over-TCP")
     g.add_argument("--sim-strict", action="store_true",
@@ -98,12 +102,27 @@ def parse_args(argv=None):
                 _host_port(getattr(args, opt))
             except ValueError as e:
                 p.error(f"--{opt.replace('_', '-')}: {e}")
+    used = {1}  # Unit ID 1 = wbudowany Symulator 3F
     for spec in args.sim_preset:
         try:
-            _sim_spec(spec)
+            _, unit = _sim_spec(spec)
         except ValueError as e:
             p.error(f"--sim-preset: {e}")
+        if unit in used:
+            p.error(f"--sim-preset: Unit ID {unit} jest już zajęty (1 = Symulator 3F, bez :UNIT = 2) - "
+                    "podaj PRESET:UNIT")
+        used.add(unit)
     return args
+
+
+def _tcp_port(value):
+    try:
+        port = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"niepoprawny port: {value!r}") from None
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port musi być w zakresie 1-65535")
+    return port
 
 
 def _host_port(value, default_port=502):
@@ -288,7 +307,7 @@ class AppContext:
                 continue
             try:
                 step()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("Błąd przy zamykaniu")
 
 
@@ -315,6 +334,8 @@ def main(argv=None):
     signal.signal(signal.SIGTERM, _terminate)
 
     shown = "localhost" if args.host in ("0.0.0.0", "::") else args.host
+    if ":" in shown:
+        shown = f"[{shown}]"  # adres IPv6 w URL
     log.info("Dashboard: http://%s:%s", shown, args.port)
     if not args.auth and args.host not in ("127.0.0.1", "localhost", "::1"):
         log.info("Wskazówka: dashboard jest dostępny w sieci bez hasła - użyj --auth USER:HASŁO lub --host 127.0.0.1")

@@ -148,7 +148,7 @@ def create_app(ctx):
                    "albo włącz logowanie (--auth)")
             if request.path.startswith("/api/"):
                 return jsonify({"error": msg}), 403
-            return Response(msg + "\n", 403, mimetype="text/plain; charset=utf-8")
+            return Response(msg + "\n", 403, mimetype="text/plain")  # Werkzeug dopisuje charset=utf-8
         if auth:
             a = request.authorization
             ok = (a is not None and a.type == "basic"
@@ -294,7 +294,7 @@ def create_app(ctx):
 
     @app.get("/metrics")
     def api_metrics():
-        return Response(metrics.render(ctx.poller), mimetype="text/plain; version=0.0.4; charset=utf-8")
+        return Response(metrics.render(ctx.poller), mimetype="text/plain; version=0.0.4")
 
     # ── presety ────────────────────────────────────────────────
     @app.get("/api/presets")
@@ -499,13 +499,17 @@ def create_app(ctx):
         meta = (ctx.poller.values(dev_id) or {}).get("meta", {})
         buf = io.StringIO()
         w = csv.writer(buf, delimiter=";")
-        w.writerow(["czas"] + [_csv_safe(f"{meta.get(k, {}).get('label', k)} [{meta.get(k, {}).get('unit', '')}]")
-                               for k in data["keys"]])
+        def head(k):
+            m = meta.get(k, {})
+            label, unit = m.get("label", k), m.get("unit", "")
+            return _csv_safe(f"{label} [{unit}]" if unit else str(label))
+
+        w.writerow(["czas"] + [head(k) for k in data["keys"]])
         for row in data["points"]:
             w.writerow([datetime.fromtimestamp(row[0]).isoformat(sep=" ", timespec="seconds")] +
                        ["" if v is None else str(v).replace(".", ",") for v in row[1:]])
         name = f"{dev_id}_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
-        return Response("\ufeff" + buf.getvalue(), mimetype="text/csv; charset=utf-8",
+        return Response("\ufeff" + buf.getvalue(), mimetype="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     # ── odczyt wg presetu (zgodność wstecz) ────────────────────

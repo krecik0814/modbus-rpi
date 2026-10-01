@@ -1465,7 +1465,7 @@ function helpCard() {
   const d = h('details', { class: 'card pr-help', open: !!store.get('presets.help', false) },
     h('summary', null, h('span', { class: 'card-title' }, 'Format presetu'), h('span', { class: 'muted small' }, 'pola JSON, kolejność bajtów, przykład')),
     h('div', { class: 'prose' },
-      h('p', null, 'Preset to plik JSON z mapą rejestrów jednego modelu licznika (schemat 2, zgodny wstecz ze starym formatem). ',
+      h('p', null, 'Preset to plik JSON z mapą rejestrów jednego modelu licznika. Pliki z wcześniejszych wersji aplikacji też działają - wszystkie nowe pola są opcjonalne. ',
         'Pola na poziomie presetu ustalają wartości domyślne, które pojedynczy rejestr może nadpisać. ',
         'Wartość fizyczna = surowa × scale + offset.'),
       h('h3', null, 'Pola presetu'),

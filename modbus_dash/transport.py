@@ -358,7 +358,7 @@ def _bit_bytes_reversed():
             resp = importlib.import_module(mod).ReadCoilsResponse()
             resp.decode(b"\x02\x01\x00")
             return not resp.bits[0] and bool(resp.bits[8])
-        except Exception:  # noqa: BLE001 - inna wersja API, próbujemy dalej
+        except Exception:  # inna wersja API, próbujemy dalej
             continue
     return False
 
@@ -611,7 +611,7 @@ class Bus:
                         raise
         except ModbusError as e:
             return {"ok": False, "error": str(e), "kind": e.kind, "ms": _ms(t0)}
-        except Exception as e:  # noqa: BLE001 - ping nigdy nie rzuca
+        except Exception as e:  # ping nigdy nie rzuca
             return {"ok": False, "error": f"Błąd: {e}", "kind": "io", "ms": _ms(t0)}
         out = {"ok": True, "error": None, "kind": None, "ms": _ms(t0)}
         if note:
@@ -709,7 +709,7 @@ class Bus:
                     self._pace(client)
                     t0 = time.monotonic()
                     result = op(client, kw)
-                except Exception as e:  # noqa: BLE001 - każdy błąd pymodbus/pyserial -> ModbusError
+                except Exception as e:  # każdy błąd pymodbus/pyserial -> ModbusError
                     err = e if isinstance(e, ModbusError) else self._classify(e, time.monotonic() - t0,
                                                                               timeout, unit)
                 else:
@@ -834,7 +834,7 @@ class Bus:
                 if left <= 0 or not take(left):
                     break
                 end = time.monotonic() + RECOVERY_GAP
-        except Exception as e:  # noqa: BLE001 - błąd łącza zgłosi kolejne zapytanie
+        except Exception as e:  # błąd łącza zgłosi kolejne zapytanie
             log.debug("odrzucanie zaległych danych: %s", e)
         flush = getattr(sock, "reset_input_buffer", None)
         if flush is not None:
@@ -898,7 +898,7 @@ class Bus:
             if cls is None:
                 raise RuntimeError("ta wersja pymodbus nie obsługuje tego rodzaju połączenia")
             return cls(*args, **_client_kwargs(cls, kw))
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             raise _conn_error(f"Nie można utworzyć klienta pymodbus ({c.describe()}): {e}") from None
 
     def _open_tcp(self, timeout):
@@ -940,7 +940,7 @@ class Bus:
             # nadpisywać pliki; TransportConfig i tak ich nie przepuszcza
             ser = serial.Serial(port=port, baudrate=c.baudrate, bytesize=c.bytesize, parity=c.parity,
                                 stopbits=c.stopbits, timeout=timeout, exclusive=True)
-        except Exception as e:  # noqa: BLE001 - pyserial rzuca różne wyjątki (także termios)
+        except Exception as e:  # pyserial rzuca różne wyjątki (także termios)
             code = getattr(e, "errno", None)
             if code in (errno.EACCES, errno.EPERM) or isinstance(e, PermissionError):
                 msg = f"Brak uprawnień do portu {port} (dodaj użytkownika do grupy dialout)"
@@ -1131,7 +1131,7 @@ def list_serial_ports():
     try:
         from serial.tools import list_ports
         found = sorted(list_ports.comports(), key=lambda p: p.device)
-    except Exception:  # noqa: BLE001 - brak pyserial albo błąd wyliczania
+    except Exception:  # brak pyserial albo błąd wyliczania
         found = []
     for p in found:
         add(p.device, _clean(p.description), _clean(p.hwid))

@@ -39,14 +39,15 @@ export function mount(root, ctx) {
   };
   let devicesFailed = false;
   const historyAvailable = !!(ctx.info && ctx.info.features && ctx.info.features.history);
+  const ranges = RANGES.filter(([s]) => s <= MEMORY_RANGE || historyAvailable);
+  if (!ranges.some(([s]) => s === state.range)) state.range = 900;  // zapamiętany zakres niedostępny
 
   // ── szkielet ──────────────────────────────────────────────
   const devSel = h('select', { 'aria-label': 'Urządzenie', onchange: () => selectDevice(devSel.value) });
   const modeBtns = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Tryb' },
     h('button', { type: 'button', dataset: { mode: 'cards' }, onclick: () => setMode('cards') }, 'Karty'),
     h('button', { type: 'button', dataset: { mode: 'charts' }, onclick: () => setMode('charts') }, 'Wykresy'));
-  const rangeSel = select(RANGES.filter(([s]) => s <= MEMORY_RANGE || historyAvailable),
-    state.range, { 'aria-label': 'Zakres historii', onchange: () => setRange(+rangeSel.value) });
+  const rangeSel = select(ranges, state.range, { 'aria-label': 'Zakres historii', onchange: () => setRange(+rangeSel.value) });
   const csvBtn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: exportCsv, title: 'Eksport historii do CSV' }, 'CSV');
   const actions = h('div', { class: 'actions' }, devSel, modeBtns, rangeSel, csvBtn);
   const header = h('div', { class: 'page-header' }, h('h2', null, 'Dashboard'), actions);

@@ -602,7 +602,7 @@ export function mount(root, ctx) {
           h('li', null, 'Unit ID fabrycznie zwykle ', h('code', null, '1'), '; każdy licznik na magistrali musi mieć inny.')),
         h('h3', null, 'Nazwy portów'),
         h('ul', null,
-          h('li', null, 'Raspberry Pi UART: ', h('code', null, '/dev/serial0'), ' (włącz UART w raspi-config, wyłącz konsolę szeregową)'),
+          h('li', null, 'Raspberry Pi UART: ', h('code', null, '/dev/serial0'), ' (RPi 5: ', h('code', null, '/dev/ttyAMA0'), '; włącz UART w raspi-config, wyłącz konsolę szeregową)'),
           h('li', null, 'Przejściówka USB-RS485: ', h('code', null, '/dev/ttyUSB0')),
           h('li', null, 'Windows: ', h('code', null, 'COM3'), ' (numer sprawdzisz w Menedżerze urządzeń)')),
         h('h3', null, 'Brak odpowiedzi?'),

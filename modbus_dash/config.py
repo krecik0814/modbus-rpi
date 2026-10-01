@@ -196,25 +196,34 @@ class ConfigStore:
         if self.path.is_file():
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            except OSError as e:
+                raise ConfigError(f"nie można odczytać {self.path}: {e}") from None
+            except ValueError:
+                data = None
+            if not isinstance(data, dict):
                 # uszkodzony plik zostaje do wglądu, start z wartości domyślnych
+                bad = self.path.with_suffix(".json.bad")
                 try:
-                    os.replace(self.path, self.path.with_suffix(".json.bad"))
+                    os.replace(self.path, bad)
                 except OSError:
-                    pass
+                    bad = None
+                log.warning("%s nie jest poprawnym obiektem JSON - start z ustawień domyślnych%s", self.path,
+                            f" (plik przeniesiono do {bad})" if bad else "")
+                data = {}
         base = copy.deepcopy(defaults)
         if not data:
             data = base
-        buses = {}
-        for bid, b in (data.get("buses") or base.get("buses") or {}).items():
+        buses, devices, dropped = {}, {}, []
+        raw_buses = data.get("buses") if isinstance(data.get("buses"), dict) else None
+        for bid, b in (raw_buses or base.get("buses") or {}).items():
             try:
                 buses[bid] = validate_bus(bid, b)
-            except ConfigError:
-                continue
+            except ConfigError as e:
+                dropped.append(str(e))
         if "default" not in buses:
             buses["default"] = validate_bus("default", (base.get("buses") or {}).get("default", {"kind": "tcp"}))
-        devices, dropped = {}, []
-        for did, d in (data.get("devices") or {}).items():
+        raw_devices = data.get("devices") if isinstance(data.get("devices"), dict) else {}
+        for did, d in raw_devices.items():
             if isinstance(d, dict) and "enabled" in d and not isinstance(d["enabled"], bool):
                 # ręczna edycja pliku: "enabled": 1 / "nie" - rozumiemy, zamiast gubić urządzenie
                 flag = _as_bool(d["enabled"])
@@ -234,7 +243,7 @@ class ConfigStore:
                 shutil.copy2(self.path, backup)
             except OSError:
                 backup = None
-            log.warning("config.json: pominięto niepoprawne wpisy (%s)%s", "; ".join(dropped),
+            log.warning("%s: pominięto niepoprawne wpisy (%s)%s", self.path.name, "; ".join(dropped),
                         f" - kopia pliku: {backup}" if backup else "")
         return {"version": 1, "buses": buses, "devices": devices, **sections}
 

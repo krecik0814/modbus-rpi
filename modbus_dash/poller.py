@@ -120,7 +120,7 @@ class Poller:
             for fn in list(self.preset_listeners):
                 try:
                     fn(dev_id)
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.exception("Listener zmiany presetu")
 
     def reload(self):
@@ -177,13 +177,13 @@ class Poller:
             rt.preset_error = None if preset else f"preset '{pid}' nie istnieje"
         except PresetError as e:
             preset, rt.preset_error = None, f"preset '{pid}' jest niepoprawny: {e}"
-        except Exception as e:  # noqa: BLE001 - zły plik użytkownika nie może zatrzymać odpytywania
+        except Exception as e:  # zły plik użytkownika nie może zatrzymać odpytywania
             preset, rt.preset_error = None, f"nie można wczytać presetu '{pid}': {e}"
         # ostatni dobry preset (metadane, historia) zostaje tylko, gdy to wciąż ten sam preset
         keep = rt.preset is not None and rt.preset.get("id") == pid
         try:
             return rt.set_preset(preset, self.reader_factory, keep=keep)
-        except Exception as e:  # noqa: BLE001 - np. błąd planowania odczytów
+        except Exception as e:  # np. błąd planowania odczytów
             rt.preset_error = f"preset '{pid}': {e}"
             return rt.set_preset(None, self.reader_factory, keep=keep)
 
@@ -229,7 +229,7 @@ class Poller:
             bus = self._bus_for(bus_id)
             res = reader.read(bus, rt.cfg["unit"])
             error = None if res["ok"] else next(iter(res["errors"].values()), "brak danych")
-        except Exception as e:  # noqa: BLE001 - błąd konfiguracji/transportu nie może zabić wątku
+        except Exception as e:  # błąd konfiguracji/transportu nie może zabić wątku
             log.warning("Odczyt %s: %s", rt.id, e)
             res = {"values": {}, "errors": {}, "duration_ms": 0.0, "requests": 0, "ok": False}
             error = str(e)
@@ -251,7 +251,7 @@ class Poller:
         for fn in list(self.listeners):
             try:
                 fn(rt.id, rt, sample)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("Listener odczytu")
         return sample
 

@@ -21,7 +21,6 @@ const PREFERRED_SAMPLE_KEYS = ['voltage_l1', 'voltage', 'current_l1', 'current',
 
 // ── pomocnicze ───────────────────────────────────────────────
 
-
 /** Klucz jak w backendzie (quantities.safe_key) - używany w nazwach topiców MQTT. */
 function safeKey(s) {
   return String(s).replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'value';
@@ -42,11 +41,7 @@ function fmtDuration(sec) {
   return `${(sec / 86400).toLocaleString('pl-PL', { maximumFractionDigits: 1 })} dni`;
 }
 
-/**
- * Przycisk w stanie "zajęty" na czas fn(); kolejne kliknięcia są ignorowane.
- * W odróżnieniu od busy() z core.js zachowuje tekst ustawiony w fn(), a dataset.busy
- * sprawdza odpytywanie stanu MQTT.
- */
+/** Zdejmuje komunikaty błędów ze wszystkich oznaczonych pól w root. */
 function clearFieldErrors(root) {
   root.querySelectorAll('[aria-invalid="true"]').forEach((c) => fieldError(c, null));
 }
@@ -720,7 +715,7 @@ function historyCard(ctx, life, onChange) {
       badge = ['Uruchamianie', 'badge-warn'];
     } else {
       badge = ['Wyłączony', 'badge-muted'];
-      note = ['notice-info', 'Zapis do bazy jest wyłączony - wykresy pokazują tylko odczyty z bufora w pamięci. Zapisane wcześniej dane pozostają w pliku data/history.sqlite.'];
+      note = ['notice-info', 'Zapis do bazy jest wyłączony - wykresy pokazują tylko odczyty z bufora w pamięci. Zapisane wcześniej dane pozostają w pliku history.sqlite w katalogu danych.'];
     }
     headBadge.textContent = badge[0];
     headBadge.className = 'badge ' + badge[1];
@@ -831,12 +826,14 @@ function prometheusCard(ctx, life) {
   const metricsTable = h('div', { class: 'table-wrap' }, h('table', { class: 'tbl' },
     h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Metryka'), h('th', { scope: 'col' }, 'Znaczenie'))),
     h('tbody', null, [
-      ['modbus_dash_value', 'wartość z licznika; etykiety device, key, label, unit, group'],
+      ['modbus_dash_value', 'wartość z licznika; etykiety device, device_name, key, label, unit, group'],
       ['modbus_dash_up', '1 gdy ostatni odczyt się udał, inaczej 0'],
       ['modbus_dash_polls_total', 'liczba odczytów (licznik)'],
       ['modbus_dash_poll_failures_total', 'liczba nieudanych odczytów'],
       ['modbus_dash_poll_duration_seconds', 'czas trwania ostatniego odczytu'],
+      ['modbus_dash_last_poll_timestamp_seconds', 'czas ostatniej próby odczytu (unix)'],
       ['modbus_dash_last_success_timestamp_seconds', 'czas ostatniego udanego odczytu (unix)'],
+      ['modbus_dash_info', 'wersja Modbus Dash w etykiecie version (wartość zawsze 1)'],
     ].map(([m, d]) => h('tr', null, h('td', null, h('code', null, m)), h('td', null, d))))));
 
   const el = h('section', { class: 'card', 'aria-labelledby': 'int-prom-t' },

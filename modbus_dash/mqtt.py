@@ -6,7 +6,9 @@ Topiki (prefiks domyślnie "modbus-dash"):
     <prefiks>/status                 online/offline (retained, LWT)
     <prefiks>/<urządzenie>/state     JSON {klucz: wartość, ..., "ts": unix}  (<urządzenie> = id urządzenia)
     <prefiks>/<urządzenie>/availability  online/offline
-    homeassistant/sensor/<prefiks>/<urządzenie>_<klucz>/config   discovery
+    <ha_prefix>/sensor/<węzeł>/<urządzenie>_<klucz>/config   discovery
+        (ha_prefix domyślnie "homeassistant"; <węzeł> = prefiks ze znakami spoza A-Z a-z 0-9 _
+        zamienionymi na "_", np. modbus_dash)
 """
 
 import json
@@ -22,7 +24,7 @@ log = logging.getLogger("modbus-dash.mqtt")
 
 try:
     import paho.mqtt.client as _paho
-except ImportError:  # pragma: no cover - zależność opcjonalna
+except ImportError:  # zależność opcjonalna
     _paho = None
 
 
@@ -153,7 +155,7 @@ class MqttPublisher:
                     pass
             client.disconnect()
             client.loop_stop()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
 
     def stop(self):
@@ -229,7 +231,7 @@ class MqttPublisher:
                         self._publish_discovery_all()
                 elif msg.retain and msg.payload and self._is_discovery_topic(msg.topic):
                     self._sweep(msg.topic, msg.payload)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("MQTT: wiadomość %s", getattr(msg, "topic", "?"))
 
     def _discovery_filter(self):

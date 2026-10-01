@@ -474,7 +474,7 @@ def _closest(chosen, names, vals, kind, expected, tol, absolute=False):
 
 
 def suggest_preset(rows, byte_order=None, register_type="input", name=None, alignment=None):
-    """Szkic presetu (schemat 2) z wierszy skanu z podpowiedziami.
+    """Szkic presetu (format opisany w presets.py) z wierszy skanu z podpowiedziami.
 
     Klucze kanoniczne (voltage_l1..l3, current_l1..l3, frequency, sumy...) tylko
     przy pewnym wzorcu, pozostałe "<rodzaj>_0x<adres>". Domyślna kolejność bajtów

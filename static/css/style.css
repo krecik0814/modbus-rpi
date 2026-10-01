@@ -387,7 +387,6 @@ code{background:var(--bg3);padding:1px 6px;border-radius:4px;font-family:var(--m
 /* ── widok: integrations ── */
 .v-integrations fieldset{border:0;min-width:0}
 .v-integrations legend{padding:0}
-.v-integrations .sr-only,.v-help .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .v-integrations .int-lead{margin:-4px 0 14px;max-width:900px}
 .v-integrations .int-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,440px),1fr));gap:16px;align-items:start;margin-bottom:16px}
 .v-integrations .int-cols>.card{margin:0;min-width:0}
