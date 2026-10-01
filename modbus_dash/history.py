@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS samples (
 
 
 class HistoryDB:
+    """Zapis próbek pollera do SQLite (agregacja w przedziałach) i odczyt do wykresów."""
+
     def __init__(self, path, bucket_seconds=60, retention_days=30):
         self.path = str(path)
         self.bucket = int(bucket_seconds)
@@ -125,10 +127,6 @@ class HistoryDB:
                 self._db.execute("DELETE FROM samples WHERE ts < ?", (cutoff,))
         except sqlite3.Error as e:
             log.warning("Czyszczenie historii: %s", e)
-
-    def flush(self):
-        with self._lock:
-            self._flush_all()
 
     def close(self):
         with self._lock:

@@ -35,7 +35,6 @@ class ConfigError(ValueError):
 def _check_id(kind, value):
     if not isinstance(value, str) or not ID_RE.fullmatch(value):
         raise ConfigError(f"{kind}: identyfikator może zawierać małe litery, cyfry, '_' i '-' (max 32 znaki)")
-    return value
 
 
 def validate_bus(bus_id, data):
@@ -67,7 +66,7 @@ def validate_device(dev_id, data, buses):
     preset = data.get("preset") or None
     if preset is not None and not isinstance(preset, str):
         raise ConfigError(f"urządzenie '{dev_id}': preset musi być tekstem")
-    enabled = data.get("enabled", True)
+    enabled = data.get("enabled")
     if enabled is None:
         enabled = True
     if not isinstance(enabled, bool):  # bool("false") == True - tylko prawdziwe wartości logiczne
@@ -111,7 +110,7 @@ def _lenient(validator, data, where, dropped):
     except ConfigError:
         pass
     good = {}
-    for k, v in (data or {}).items() if isinstance(data, dict) else ():
+    for k, v in data.items() if isinstance(data, dict) else ():
         try:
             validator({**good, k: v})
             good[k] = v
@@ -185,9 +184,9 @@ class ConfigStore:
     def __init__(self, path, defaults=None, overrides=None):
         self.path = Path(path)
         self._lock = threading.RLock()
-        self._overrides = overrides or {}  # {"buses": {id: cfg}} - tylko w pamięci (CLI)
+        self._overrides = overrides or {}  # {"buses": {...}, "devices": {...}} - tylko w pamięci (CLI)
         self._listeners = []
-        # kolejność zapisów i powiadomień; słuchacze (np. MQTT) działają już bez self._lock,
+        # porządkuje zapisy i powiadomienia; słuchacze (np. MQTT) są wywoływani poza self._lock,
         # więc wolny słuchacz nie blokuje get() w wątkach odpytywania
         self._write_lock = threading.RLock()
         self._data = self._load(defaults or {})
@@ -198,12 +197,11 @@ class ConfigStore:
             try:
                 data = json.loads(self.path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
-                bad = self.path.with_suffix(".json.bad")
+                # uszkodzony plik zostaje do wglądu, start z wartości domyślnych
                 try:
-                    os.replace(self.path, bad)
+                    os.replace(self.path, self.path.with_suffix(".json.bad"))
                 except OSError:
                     pass
-                data = {}
         base = copy.deepcopy(defaults)
         if not data:
             data = base

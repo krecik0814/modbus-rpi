@@ -13,8 +13,6 @@ from . import heuristics
 from .planner import PresetReader
 from .presets import PresetError
 
-MAX_REGS = 125
-MAX_BITS = 2000
 # Eastron i część liczników przyjmuje maks. 80 rejestrów i tylko parzyste długości
 SCAN_CHUNK = 80
 
@@ -28,23 +26,20 @@ def _fatal(e):
     return getattr(e, "kind", "io") in ("connection", "timeout")
 
 
-def read_range(bus, unit, function, start, end, chunk=SCAN_CHUNK, max_requests=None):
-    """Czyta rejestry [start, end).
+def read_range(bus, unit, function, start, end):
+    """Czyta rejestry [start, end) blokami po SCAN_CHUNK.
 
     Zwraca (wartości z None dla nieczytelnych, błąd|None, liczba zapytań, ostatni wyjątek
     Modbus|None, adres końca sprawdzonego zakresu). Gdy urządzenie odrzuci blok wyjątkiem
     Modbus, blok jest dzielony na pół aż do pojedynczych rejestrów - dzięki temu skan omija
     dziury w mapie rejestrów. Wyjątek 01 (niedozwolona funkcja) dotyczy całej funkcji, więc
-    kończy skan od razu. Limit zapytań domyślnie rośnie z zakresem (dzielenie nieczytelnych
-    obszarów kosztuje ok. 2 zapytania na rejestr).
+    kończy skan od razu. Limit zapytań rośnie z zakresem (dzielenie nieczytelnych obszarów
+    kosztuje ok. 2 zapytania na rejestr).
     """
-    if max_requests is None:
-        max_requests = max(400, 2 * (end - start))
+    max_requests = max(400, 2 * (end - start))
     bits = function in ("coil", "discrete")
-    limit = MAX_BITS if bits else MAX_REGS
-    chunk = max(1, min(chunk, limit))
     out = [None] * (end - start)
-    pending = [(a, min(chunk, end - a)) for a in range(start, end, chunk)]
+    pending = [(a, min(SCAN_CHUNK, end - a)) for a in range(start, end, SCAN_CHUNK)]
     requests = 0
     error = None
     last_exc = None
@@ -124,26 +119,15 @@ def _ranges(start, values):
     return out
 
 
-@contextlib.contextmanager
-def quick(bus, timeout, settle=None):
-    """Tymczasowo krótszy timeout (o ile transport to wspiera). settle: patrz Bus.override."""
-    override = getattr(bus, "override", None)
-    if override is None:
-        yield
-        return
-    kw = {} if settle is None else {"settle": settle}
-    with override(timeout=timeout, retries=0, **kw):
-        yield
-
-
 def scan_units(job, bus, first, last, function, address, count, timeout):
     """Szuka urządzeń odpowiadających na Unit ID z zakresu [first, last]."""
     units = list(range(first, last + 1))
     job.progress(0, len(units), "Szukanie urządzeń...")
     found = []
-    # po timeoucie transport krótko czeka na spóźnioną odpowiedź (ERROR_SETTLE) - pymodbus >= 3.8
-    # odrzuca ramkę innego Unit ID razem z właściwą odpowiedzią, więc nie wolno tego skracać
-    with quick(bus, timeout):
+    # krótszy timeout, bez ponowień; czekania transportu na spóźnioną odpowiedź po timeoucie
+    # (ERROR_SETTLE) nie skracamy - pymodbus >= 3.8 odrzuca ramkę innego Unit ID razem
+    # z właściwą odpowiedzią
+    with bus.override(timeout=timeout, retries=0):
         for i, unit in enumerate(units):
             if job.cancelled:
                 break
@@ -156,13 +140,11 @@ def scan_units(job, bus, first, last, function, address, count, timeout):
                 if kind == "exception":
                     # odpowiedź wyjątkiem też oznacza, że urządzenie istnieje
                     entry.update(ok=True, exception=str(e))
-                elif kind == "connection" and getattr(e, "code", None) == 0x0A:
-                    entry = None  # bramka: brak ścieżki do tego Unit ID - szukamy dalej
-                elif kind == "connection":
+                elif kind == "connection" and getattr(e, "code", None) != 0x0A:
                     job.fail(str(e))
                     return
                 else:
-                    entry = None
+                    entry = None  # brak odpowiedzi albo bramka bez ścieżki do tego Unit ID (0x0A)
             if entry:
                 found.append(entry)
                 job.results.append(entry)
@@ -204,17 +186,17 @@ def detect_preset(job, bus, unit, store, timeout=None):
             preset = None
         if not preset or not preset["registers"]:
             continue
-        keys = [k for k in DETECT_KEYS if k in preset["registers"]]
-        if preset.get("probe") and preset["probe"] not in keys:
-            keys.insert(0, preset["probe"])
-        if not keys:
-            keys = list(preset["registers"])[:4]
-        keys = keys[:6]
-        keys += [preset["registers"][k]["scale_from"] for k in keys
-                 if preset["registers"][k].get("scale_from") and preset["registers"][k]["scale_from"] not in keys]
-        sub = {**preset, "registers": {k: preset["registers"][k] for k in keys}}
+        regs = preset["registers"]
+        keys = [k for k in DETECT_KEYS if k in regs]
+        probe = preset.get("probe")
+        if probe and probe not in keys:
+            keys.insert(0, probe)
+        keys = (keys or list(regs)[:4])[:6]
+        # rejestry współczynników skali (scale_from) są potrzebne do przeliczenia wartości
+        keys += [regs[k]["scale_from"] for k in keys if regs[k].get("scale_from") and regs[k]["scale_from"] not in keys]
+        sub = {**preset, "registers": {k: regs[k] for k in keys}}
         try:
-            with quick(bus, timeout) if timeout else contextlib.nullcontext():
+            with bus.override(timeout=timeout, retries=0) if timeout else contextlib.nullcontext():
                 res = PresetReader(sub).read(bus, unit)
         except Exception as e:  # noqa: BLE001
             res = {"values": {}, "errors": {"*": str(e)}, "ok": False}
@@ -235,6 +217,8 @@ def detect_preset(job, bus, unit, store, timeout=None):
 
 
 class Job:
+    """Zadanie w tle; stan i wyniki częściowe (results) czyta przeglądarka przez to_dict()."""
+
     def __init__(self, job_id, kind):
         self.id = job_id
         self.kind = kind
@@ -272,6 +256,8 @@ class Job:
 
 
 class JobManager:
+    """Zadania w tle: najwyżej jedno trwające danego rodzaju, pamiętane ostatnie `keep`."""
+
     def __init__(self, keep=20):
         self._jobs = {}
         self._lock = threading.Lock()
@@ -281,9 +267,7 @@ class JobManager:
     def start(self, kind, fn, *args):
         job = Job(f"{kind}-{next(self._ids)}", kind)
         with self._lock:
-            running = [j for j in self._jobs.values()
-                       if j.kind == kind and j.state == "running" and not j.cancelled]
-            if running:
+            if any(j.kind == kind and j.state == "running" and not j.cancelled for j in self._jobs.values()):
                 raise RuntimeError("takie zadanie już trwa - poczekaj lub je anuluj")
             self._jobs[job.id] = job
             for old in sorted(self._jobs.values(), key=lambda j: j.started)[:-self._keep]:
@@ -293,7 +277,7 @@ class JobManager:
         def run():
             try:
                 fn(job, *args)
-                if job.state == "running":
+                if job.state == "running":  # funkcja nie zakończyła zadania sama
                     job.finish(job.result)
             except Exception as e:  # noqa: BLE001
                 job.fail(str(e) or e.__class__.__name__)

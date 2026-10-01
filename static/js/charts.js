@@ -7,27 +7,23 @@ const GRID = '#1e293b';
 const LABEL = '#64748b';
 
 /**
- * new AreaChart(canvas, {color, decimals, unit, axes: false, markers: false, tooltip: true})
+ * new AreaChart(canvas, {color, decimals, unit, axes: false, markers: false})
  * chart.setData([[ts, value|null], ...])   // ts w sekundach
  */
 export class AreaChart {
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
-    this.opts = { color: '#3b82f6', decimals: 2, unit: '', axes: false, markers: false, tooltip: true, ...opts };
+    this.opts = { color: '#3b82f6', decimals: 2, unit: '', axes: false, markers: false, ...opts };
     this.data = [];
     this.hover = null;
     this.tip = null;
     this._ro = new ResizeObserver(() => this.draw());
     this._ro.observe(canvas);
-    if (this.opts.tooltip) {
-      this._move = (e) => this._onMove(e);
-      this._leave = () => { this.hover = null; this._hideTip(); this.draw(); };
-      canvas.addEventListener('pointermove', this._move);
-      canvas.addEventListener('pointerleave', this._leave);
-    }
+    this._move = (e) => this._onMove(e);
+    this._leave = () => { this.hover = null; this._hideTip(); this.draw(); };
+    canvas.addEventListener('pointermove', this._move);
+    canvas.addEventListener('pointerleave', this._leave);
   }
-
-  setOptions(o) { Object.assign(this.opts, o); this.draw(); }
 
   setData(points) {
     this.data = points || [];
@@ -36,10 +32,8 @@ export class AreaChart {
 
   destroy() {
     this._ro.disconnect();
-    if (this._move) {
-      this.canvas.removeEventListener('pointermove', this._move);
-      this.canvas.removeEventListener('pointerleave', this._leave);
-    }
+    this.canvas.removeEventListener('pointermove', this._move);
+    this.canvas.removeEventListener('pointerleave', this._leave);
     this._hideTip();
   }
 
@@ -62,7 +56,7 @@ export class AreaChart {
     }
     const a = this.opts.axes;
     const m = a ? { l: 64 * dpr, r: 16 * dpr, t: 14 * dpr, b: 28 * dpr } : { l: 0, r: 0, t: 6 * dpr, b: 0 };
-    return { W, H, dpr, m, cw: W - m.l - m.r, ch: H - m.t - m.b, rect };
+    return { W, H, dpr, m, cw: W - m.l - m.r, ch: H - m.t - m.b };
   }
 
   draw() {
@@ -90,7 +84,7 @@ export class AreaChart {
     const yMin = mn - pad, yMax = mx + pad;
     const px = (t) => m.l + ((t - t0) / span) * cw;
     const py = (v) => m.t + ch - ((v - yMin) / (yMax - yMin)) * ch;
-    this._geom = { px, py, t0, t1, m, cw, ch, dpr };
+    this._geom = { px, py, m, ch, dpr };
 
     // przerwa, gdy brak wartości albo nagły skok odstępu czasu względem lokalnego rytmu próbek
     // (dane z SQLite co 60 s i z pamięci co 1 s łączą się w jedną linię)
@@ -168,11 +162,11 @@ export class AreaChart {
       dot(last, '#fff', 2.5);
     }
 
-    if (this.hover) this._drawHover(ctx, L);
+    if (this.hover) this._drawHover(ctx);
   }
 
   _axes(ctx, L, yMin, yMax, t0, t1, px, py) {
-    const { W, H, dpr, m, cw } = L;
+    const { W, H, dpr, m, cw, ch } = L;
     ctx.font = `${11 * dpr}px Consolas, ui-monospace, monospace`;
     ctx.lineWidth = 1;
     ctx.strokeStyle = GRID;
@@ -193,7 +187,7 @@ export class AreaChart {
     for (let i = 0; i <= n; i++) {
       const t = t0 + (span * i) / n;
       const x = px(t);
-      ctx.beginPath(); ctx.moveTo(x, m.t); ctx.lineTo(x, m.t + L.ch); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, m.t); ctx.lineTo(x, m.t + ch); ctx.stroke();
       const d = new Date(t * 1000);
       const label = long
         ? d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
@@ -229,7 +223,7 @@ export class AreaChart {
       if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
       host.append(this.tip);
     }
-    const span = this.data.length ? this.data[this.data.length - 1][0] - this.data[0][0] : 0;
+    const span = this.data[this.data.length - 1][0] - this.data[0][0];
     this.tip.replaceChildren();
     const v = document.createElement('div');
     v.textContent = `${fmt(p[1], this.opts.decimals)} ${this.opts.unit || ''}`.trim();
@@ -244,7 +238,7 @@ export class AreaChart {
     this.tip.style.top = `${Math.max(top, 30)}px`;
   }
 
-  _drawHover(ctx, L) {
+  _drawHover(ctx) {
     const p = this.hover;
     if (!p || !this._geom) return;
     const { px, py, dpr, m, ch } = this._geom;

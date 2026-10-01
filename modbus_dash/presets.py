@@ -1,6 +1,6 @@
 """Presety - mapy rejestrów liczników.
 
-Format JSON (schemat 2, w pełni zgodny wstecz ze starym formatem):
+Format JSON:
 
     {
       "name": "Eastron SDM630",
@@ -42,10 +42,6 @@ from pathlib import Path
 
 from . import codec
 
-GROUPS = ("voltage", "line_volt", "current", "power", "total", "pf", "system",
-          "energy", "thd", "other")
-
-FUNCTIONS = ("input", "holding")
 _FUNCTION_ALIASES = {
     "input": "input", "ir": "input", "fc4": "input", "fc04": "input", "4": "input",
     "input_registers": "input", "input_register": "input",
@@ -131,18 +127,18 @@ def normalize_preset(data):
     Wynik: dict z kluczami meta (name, manufacturer, model, phases, ...),
     'max_block', 'max_gap', 'probe' oraz 'registers': {key: spec}, gdzie spec ma
     zawsze: key, address, type, order, function, count, scale, offset,
-    decimals, unit, group, label.
+    decimals, unit, group, label, invalid, scale_from, scale_mode.
     Rzuca PresetError z listą wszystkich znalezionych problemów.
     """
     errors = []
     if not isinstance(data, dict):
         raise PresetError(["preset musi być obiektem JSON"])
 
-    def opt(name, conv, default, where="preset"):
+    def opt(name, conv, default):
         try:
             return conv(data.get(name)) if data.get(name) is not None else default
         except ValueError as e:
-            errors.append(f"{where}: {e}")
+            errors.append(f"preset: {e}")
             return default
 
     def_type = opt("data_type", codec.normalize_data_type, "float32")
@@ -163,7 +159,7 @@ def normalize_preset(data):
         errors.append(f"preset: 'read.max_block' musi być liczbą 1-{MODBUS_MAX_REGS}")
         max_block = DEFAULT_MAX_BLOCK
     if isinstance(max_gap, bool) or not isinstance(max_gap, int) or not 0 <= max_gap <= MODBUS_MAX_REGS:
-        errors.append("preset: 'read.max_gap' musi być liczbą 0-125")
+        errors.append(f"preset: 'read.max_gap' musi być liczbą 0-{MODBUS_MAX_REGS}")
         max_gap = DEFAULT_MAX_GAP
 
     phases = data.get("phases", 3)
@@ -405,9 +401,6 @@ class PresetStore:
         if isinstance(norm, PresetError):
             raise norm
         return {**norm, "id": preset_id, "builtin": builtin}
-
-    def exists(self, preset_id):
-        return self._locate(preset_id)[0] is not None
 
     def is_builtin(self, preset_id):
         path, builtin = self._locate(preset_id)

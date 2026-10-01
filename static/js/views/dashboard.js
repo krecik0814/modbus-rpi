@@ -12,6 +12,7 @@ const RANGES = [
 ];
 const MEMORY_RANGE = 3600;       // do 1 h - pełna rozdzielczość z pamięci
 const MAX_DRAW_POINTS = 600;     // tyle punktów rysujemy na małym wykresie
+const MAX_DETAIL_POINTS = 1500;  // tyle na wykresie w oknie szczegółów
 const OVERVIEW = [
   ['power_total', 'Moc czynna'], ['power_l1', 'Moc czynna'], ['energy_import', 'Energia pobrana'],
   ['energy_export', 'Energia oddana'], ['energy_total', 'Energia'], ['frequency', 'Częstotliwość'],
@@ -28,9 +29,9 @@ export function mount(root, ctx) {
     series: {},          // key -> [[ts, v], ...]
     lastTs: 0,
     built: null,         // sygnatura zbudowanego układu
-    els: {},             // key -> {val, card}
+    els: {},             // key -> {val, card, meta}; przegląd: 'ov:' + key -> {val, meta}
     charts: {},          // key -> AreaChart
-    detail: null,        // {key, chart, modal}
+    detail: null,        // {key, chart, modal, stats, meta}
     historyAt: 0,
     loadingHistory: false,
     histSeq: 0,
@@ -44,12 +45,11 @@ export function mount(root, ctx) {
   const modeBtns = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Tryb' },
     h('button', { type: 'button', dataset: { mode: 'cards' }, onclick: () => setMode('cards') }, 'Karty'),
     h('button', { type: 'button', dataset: { mode: 'charts' }, onclick: () => setMode('charts') }, 'Wykresy'));
-  const rangeSel = select(RANGES.filter(([s]) => s <= MEMORY_RANGE || historyAvailable).map(([s, l]) => [s, l]),
+  const rangeSel = select(RANGES.filter(([s]) => s <= MEMORY_RANGE || historyAvailable),
     state.range, { 'aria-label': 'Zakres historii', onchange: () => setRange(+rangeSel.value) });
   const csvBtn = h('button', { class: 'btn btn-ghost btn-sm', type: 'button', onclick: exportCsv, title: 'Eksport historii do CSV' }, 'CSV');
-  const header = h('div', { class: 'page-header' },
-    h('h2', null, 'Dashboard'),
-    h('div', { class: 'actions' }, devSel, modeBtns, rangeSel, csvBtn));
+  const actions = h('div', { class: 'actions' }, devSel, modeBtns, rangeSel, csvBtn);
+  const header = h('div', { class: 'page-header' }, h('h2', null, 'Dashboard'), actions);
   const statusLine = h('div', { class: 'status-line' });
   const notice = h('div');
   const overview = h('div', { class: 'big-stats' });
@@ -63,15 +63,14 @@ export function mount(root, ctx) {
       state.devices = await get('/api/devices');
     } catch (e) {
       devicesFailed = true;
-      header.querySelector('.actions').hidden = true;
+      actions.hidden = true;
       fill(body, h('div', { class: 'notice notice-err' },
         `Nie udało się pobrać listy urządzeń: ${e.message}. Ponawiam...`));
       return;
     }
     devicesFailed = false;
-    header.querySelector('.actions').hidden = false;
+    actions.hidden = !state.devices.length;
     if (!state.devices.length) {
-      header.querySelector('.actions').hidden = true;
       fill(body, emptyState('Brak skonfigurowanych urządzeń. Dodaj licznik albo znajdź go skanerem.', [
         { label: 'Dodaj urządzenie', href: '#devices?new=1' },
         { label: 'Skaner rejestrów', href: '#scanner', class: 'btn-ghost' },
@@ -115,7 +114,7 @@ export function mount(root, ctx) {
   }
   function updateModeButtons() {
     for (const b of modeBtns.children) b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode));
-    // zakres jest widoczny zawsze - dotyczy także eksportu CSV
+    // wybrany zakres dotyczy także eksportu CSV
     const label = (RANGES.find(([s]) => s === state.range) || [0, `${state.range} s`])[1];
     csvBtn.title = `Eksport CSV: ostatnie ${label}`;
   }
@@ -236,7 +235,7 @@ export function mount(root, ctx) {
       return;
     }
     const sig = state.mode + '|' + keys.join(',');
-    if (state.built !== sig) build(data, keys, sig);
+    if (state.built !== sig) build(data, sig);
     else update(data);
   }
 
@@ -249,20 +248,18 @@ export function mount(root, ctx) {
     return groups;
   }
 
-  function build(data, keys, sig) {
+  function build(data, sig) {
     destroyCharts();
     state.els = {};
-    // przegląd
+    // przegląd: maks. 4 wielkości, bez powtórzeń etykiety (power_l1 tylko, gdy brak power_total)
     const ov = [];
     const used = new Set();
     for (const [k, label] of OVERVIEW) {
-      if (ov.length >= 4 || !(k in data.meta)) continue;
-      if (label === 'Moc czynna' && used.has('Moc czynna')) continue;
+      if (ov.length >= 4 || !(k in data.meta) || used.has(label)) continue;
       used.add(label);
-      const m = data.meta[k];
       const val = h('span', { class: 'val' });
       ov.push(h('div', { class: 'big-stat' }, h('div', { class: 'lbl' }, label), val));
-      state.els['ov:' + k] = { val, meta: m };
+      state.els['ov:' + k] = { val, meta: data.meta[k] };
     }
     fill(overview, ov);
     overview.hidden = ov.length < 2;
@@ -281,31 +278,27 @@ export function mount(root, ctx) {
       for (const it of items) {
         const color = colorFor(it.key, it.label, it.group);
         const val = h('span', { class: 'val' });
+        const handlers = {
+          onclick: () => openDetail(it.key),
+          onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it.key); } },
+        };
+        let card;
         if (state.mode === 'charts') {
           const canvas = h('canvas', { 'aria-hidden': 'true' });
-          const card = h('div', {
-            class: 'chart-card', tabindex: '0', role: 'button', 'aria-label': `${it.label} - szczegóły`,
-            onclick: () => openDetail(it.key), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it.key); } },
-          },
-          h('div', { class: 'head' },
-            h('div', null, h('div', { class: 'lbl' }, it.label), h('div', { class: 'sub' }, it.unit ? `Wartość w ${it.unit}` : '')),
-            val),
-          canvas);
-          grid.append(card);
-          state.els[it.key] = { val, card, meta: it, unitInline: false };
+          card = h('div', { class: 'chart-card', tabindex: '0', role: 'button', 'aria-label': `${it.label} - szczegóły`, ...handlers },
+            h('div', { class: 'head' },
+              h('div', null, h('div', { class: 'lbl' }, it.label), h('div', { class: 'sub' }, it.unit ? `Wartość w ${it.unit}` : '')),
+              val),
+            canvas);
           state.charts[it.key] = new AreaChart(canvas, { color, decimals: it.decimals, unit: it.unit });
         } else {
-          const card = h('div', {
-            class: 'val-card', tabindex: '0', role: 'button', 'aria-label': `${it.label} - wykres`,
-            onclick: () => openDetail(it.key), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it.key); } },
-            style: { cursor: 'pointer' },
-          },
-          h('div', { class: 'acc', style: { background: color } }),
-          h('div', { class: 'lbl', title: it.label }, it.label),
-          h('div', null, val, h('span', { class: 'unt' }, it.unit)));
-          grid.append(card);
-          state.els[it.key] = { val, card, meta: it };
+          card = h('div', { class: 'val-card', tabindex: '0', role: 'button', 'aria-label': `${it.label} - wykres`, ...handlers, style: { cursor: 'pointer' } },
+            h('div', { class: 'acc', style: { background: color } }),
+            h('div', { class: 'lbl', title: it.label }, it.label),
+            h('div', null, val, h('span', { class: 'unt' }, it.unit)));
         }
+        grid.append(card);
+        state.els[it.key] = { val, card, meta: it };
       }
       out.push(grid);
     }
@@ -319,20 +312,20 @@ export function mount(root, ctx) {
 
   function update(data) {
     for (const [k, el] of Object.entries(state.els)) {
-      const key = k.startsWith('ov:') ? k.slice(3) : k;
-      const v = data.values[key];
       const m = el.meta;
       if (k.startsWith('ov:')) {
-        el.val.replaceChildren(fmt(v, m.decimals), h('span', { class: 'unt' }, m.unit));
+        el.val.replaceChildren(fmt(data.values[k.slice(3)], m.decimals), h('span', { class: 'unt' }, m.unit));
         continue;
       }
+      const v = data.values[k];
       el.val.textContent = state.mode === 'charts' && m.unit ? `${fmt(v, m.decimals)} ${m.unit}` : fmt(v, m.decimals);
-      const err = data.errors && data.errors[key];
+      const err = data.errors && data.errors[k];
       el.card.classList.toggle('is-error', !!err || v == null);
       el.card.title = err ? `Błąd: ${err}` : '';
     }
+    // redrawCharts() odświeża też okno szczegółów
     if (state.mode === 'charts') redrawCharts();
-    if (state.detail) updateDetail();
+    else if (state.detail) updateDetail();
   }
 
   function redrawCharts() {
@@ -356,7 +349,7 @@ export function mount(root, ctx) {
       return h('div', { class: 'stat' }, h('span', { class: 'stat-label' }, label), v);
     };
     const canvas = h('canvas', { 'aria-label': `Wykres: ${m.label}` });
-    const rangeCopy = select(rangeSel.options ? [...rangeSel.options].map((o) => [o.value, o.textContent]) : [], state.range,
+    const rangeCopy = select([...rangeSel.options].map((o) => [o.value, o.textContent]), state.range,
       { 'aria-label': 'Zakres', onchange: () => { rangeSel.value = rangeCopy.value; setRange(+rangeCopy.value); } });
     const bodyEl = h('div', { style: { display: 'flex', flexDirection: 'column', height: '100%' } },
       h('div', { class: 'toolbar', style: { justifyContent: 'space-between', marginBottom: '12px' } },
@@ -373,12 +366,10 @@ export function mount(root, ctx) {
       onClose: () => {
         if (state.detail) state.detail.chart.destroy();
         state.detail = null;
-        updateModeButtons();
       },
     });
     const chart = new AreaChart(canvas, { color, decimals: m.decimals, unit: m.unit, axes: true, markers: true });
     state.detail = { key, chart, modal: dlg, stats, meta: m };
-    updateModeButtons();
     if (!state.series[key] || !state.series[key].length || state.historyAt === 0) loadHistory();
     updateDetail();
   }
@@ -387,7 +378,7 @@ export function mount(root, ctx) {
     const d = state.detail;
     if (!d) return;
     const series = state.series[d.key] || [];
-    d.chart.setData(downsample(series, 1500));
+    d.chart.setData(downsample(series, MAX_DETAIL_POINTS));
     const st = d.chart.stats();
     const cur = state.data ? state.data.values[d.key] : null;
     const dec = d.meta.decimals;

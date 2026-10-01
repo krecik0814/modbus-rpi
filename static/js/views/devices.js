@@ -1,89 +1,22 @@
 // Widok: Urządzenia - liczniki odczytywane w tle, formularz dodawania/edycji, rozpoznawanie licznika.
 
 import {
-  h, mount as fill, get, post, put, del, enc, toast, showError, Poller, runJob, modal, confirmDialog,
-  fmt, fmtAge, fmtTime, stateBadge, STATES, KINDS, field, select, markInvalid, emptyState, pageHeader,
+  h, mount as fill, get, post, put, del, enc, toast, showError, Poller, runJob, modal, confirmDialog, fmt,
+  fmtAge, fmtTime, stateBadge, STATES, KINDS, field, select, emptyState, pageHeader, plural, uid, slugify,
+  uniqueId, busy, fieldError,
 } from '../core.js';
 
 const REFRESH_MS = 3000;
 const ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const SERIAL_KINDS = new Set(['rtu', 'ascii']);
-const PARITY = { N: 'N', E: 'E', O: 'O' };
 
 // ── pomocnicze ───────────────────────────────────────────────
 
-/** Liczba po polsku: 1 urządzenie, 2 urządzenia, 5 urządzeń. */
-function plural(n, one, few, many) {
-  const n10 = n % 10, n100 = n % 100;
-  if (n === 1) return one;
-  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
-  return many;
-}
-
-const uid = () => 'f' + Math.random().toString(36).slice(2, 10);
 const num = (v) => Number(v).toLocaleString('pl-PL', { maximumFractionDigits: 2 });
-
-/** Identyfikator z nazwy: "Licznik Główny #2" -> "licznik-glowny-2". */
-function slugify(text) {
-  const pl = { ą: 'a', ć: 'c', ę: 'e', ł: 'l', ń: 'n', ó: 'o', ś: 's', ź: 'z', ż: 'z' };
-  return String(text || '').toLowerCase()
-    .replace(/[ąćęłńóśźż]/g, (c) => pl[c])
-    .normalize('NFD').replace(/\p{Mn}/gu, '')
-    .replace(/[^a-z0-9_-]+/g, '-').replace(/-{2,}/g, '-')
-    .replace(/^[-_]+/, '').slice(0, 32).replace(/[-_]+$/, '');
-}
-
-function uniqueId(base, taken) {
-  let id = base || 'licznik';
-  if (!taken.has(id)) return id;
-  for (let i = 2; i < 1000; i++) {
-    const suffix = '-' + i;
-    const cand = id.slice(0, 32 - suffix.length).replace(/[-_]+$/, '') + suffix;
-    if (!taken.has(cand)) return cand;
-  }
-  return id;
-}
-
-/** Przycisk w stanie "zajęty" na czas fn(); drugie kliknięcie jest ignorowane. */
-async function busy(btn, fn) {
-  if (btn.dataset.busy) return undefined;
-  btn.dataset.busy = '1';
-  btn.disabled = true;
-  btn.setAttribute('aria-busy', 'true');
-  const sp = h('span', { class: 'spinner', 'aria-hidden': 'true' });
-  btn.prepend(sp);
-  try {
-    return await fn();
-  } finally {
-    sp.remove();
-    delete btn.dataset.busy;
-    btn.disabled = false;
-    btn.removeAttribute('aria-busy');
-  }
-}
-
-/** Komunikat błędu pod polem formularza (z aria-describedby). */
-function fieldError(control, msg) {
-  markInvalid(control, !!msg);
-  const f = control.closest('.field');
-  if (!f) return;
-  let e = f.querySelector('.field-err');
-  if (!msg) {
-    if (e) e.remove();
-    control.removeAttribute('aria-errormessage');
-    return;
-  }
-  if (!e) {
-    e = h('span', { class: 'field-err', id: control.id + '-err' });
-    f.append(e);
-  }
-  e.textContent = msg;
-  control.setAttribute('aria-errormessage', e.id);
-}
 
 function serialText(s) {
   if (!s || !s.baudrate) return '';
-  return `${s.baudrate} ${s.bytesize || 8}${PARITY[s.parity] || s.parity || 'N'}${s.stopbits || 1}`;
+  return `${s.baudrate} ${s.bytesize || 8}${s.parity || 'N'}${s.stopbits || 1}`;
 }
 
 function presetLabel(p) {
@@ -103,9 +36,9 @@ export function mount(root, ctx) {
     updated: null,
   };
   let destroyed = false;
-  let form = null;            // {close, deviceId}
+  let form = null;            // otwarte okno formularza (wynik modal())
   const ac = new AbortController();
-  const cards = new Map();    // id -> {el, body, btns}
+  const cards = new Map();    // id -> {el, body, btns, lockNote}
 
   const addBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openForm(null) }, '+ Dodaj urządzenie');
   const statusLine = h('div', { class: 'status-line', role: 'status', 'aria-live': 'polite' },
@@ -161,7 +94,6 @@ export function mount(root, ctx) {
 
   // ── lista ─────────────────────────────────────────────────
   function renderStatus() {
-    const parts = [];
     if (!state.loaded && !state.error) {
       fill(statusLine, h('span', { class: 'spinner' }), 'Wczytywanie urządzeń...');
       return;
@@ -172,7 +104,7 @@ export function mount(root, ctx) {
       const s = (d.status && d.status.state) || 'waiting';
       counts[s] = (counts[s] || 0) + 1;
     }
-    parts.push(h('span', null, `${n} ${plural(n, 'urządzenie', 'urządzenia', 'urządzeń')}`));
+    const parts = [h('span', null, `${n} ${plural(n, 'urządzenie', 'urządzenia', 'urządzeń')}`)];
     for (const s of ['ok', 'error', 'stale', 'no_preset', 'waiting', 'disabled']) {
       if (counts[s]) parts.push(h('span', null, stateBadge(s), ' ', counts[s]));
     }
@@ -234,12 +166,13 @@ export function mount(root, ctx) {
 
   function updateCard(c, d) {
     const st = d.status || {};
-    const state_ = st.state || (d.enabled ? 'waiting' : 'disabled');
+    const nm = d.name || d.id;
+    const devState = st.state || (d.enabled ? 'waiting' : 'disabled');
     const bus = busById(d.bus);
     const titleId = `dev-${d.id}-title`;
     c.el.setAttribute('aria-labelledby', titleId);
     c.el.classList.toggle('is-disabled', !d.enabled);
-    c.el.classList.toggle('is-error', state_ === 'error');
+    c.el.classList.toggle('is-error', devState === 'error');
 
     let presetText;
     if (d.preset_name) presetText = [d.preset_name, h('span', { class: 'muted' }, ` ${d.preset}`)];
@@ -253,23 +186,23 @@ export function mount(root, ctx) {
     let lastText = '-';
     if (st.last_ok_ts) {
       lastText = [fmtAge(Date.now() / 1000 - st.last_ok_ts),
-        state_ === 'ok' && st.duration_ms != null ? h('span', { class: 'muted' }, ` (${Math.round(st.duration_ms)} ms)`) : null,
-        state_ !== 'ok' && st.ts ? h('span', { class: 'muted' }, ` · ostatnia próba ${fmtAge(st.age)}`) : null];
+        devState === 'ok' && st.duration_ms != null ? h('span', { class: 'muted' }, ` (${Math.round(st.duration_ms)} ms)`) : null,
+        devState !== 'ok' && st.ts ? h('span', { class: 'muted' }, ` · ostatnia próba ${fmtAge(st.age)}`) : null];
     } else if (st.ts) {
       lastText = [h('span', { class: 'warn-text' }, 'nigdy'), h('span', { class: 'muted' }, ` · ostatnia próba ${fmtAge(st.age)}`)];
     } else if (d.enabled && d.preset) {
       lastText = h('span', { class: 'muted' }, 'jeszcze nie odczytano');
     }
 
-    const showErr = st.error && state_ !== 'ok' && state_ !== 'disabled';
+    const showErr = st.error && devState !== 'ok' && devState !== 'disabled';
     fill(c.body,
       h('div', { class: 'dev-head' },
         h('div', { class: 'dev-title' },
-          h('h3', { id: titleId }, d.name || d.id),
+          h('h3', { id: titleId }, nm),
           h('span', { class: 'mono small muted' }, d.id)),
         h('div', { class: 'dev-badges' },
           d.locked ? h('span', { class: 'badge badge-muted plain', title: 'Ustawione parametrami uruchomienia' }, 'CLI') : null,
-          stateBadge(state_))),
+          stateBadge(devState))),
       showErr ? h('div', { class: 'notice notice-err dev-error' }, st.error) : null,
       h('dl', { class: 'kv' },
         h('dt', null, 'Preset'), h('dd', null, presetText),
@@ -280,7 +213,6 @@ export function mount(root, ctx) {
         h('dt', null, 'Odczyty'), h('dd', null, `${st.polls ?? 0}`,
           h('span', { class: st.failures ? 'err-text' : 'muted' }, ` / błędy: ${st.failures ?? 0}`))));
 
-    const nm = d.name || d.id;
     const editLbl = d.locked ? 'Szczegóły' : 'Edytuj';
     c.btns.toggle.querySelector('.lbl').textContent = d.enabled ? 'Wyłącz' : 'Włącz';
     c.btns.toggle.setAttribute('aria-label', `${d.enabled ? 'Wyłącz' : 'Włącz'} ${nm}`);
@@ -299,10 +231,6 @@ export function mount(root, ctx) {
   }
 
   // ── akcje ─────────────────────────────────────────────────
-  function deviceBody(d, patch = {}) {
-    return { name: d.name, bus: d.bus, unit: d.unit, preset: d.preset || null, interval: d.interval, enabled: d.enabled, ...patch };
-  }
-
   function upsert(dev) {
     const i = state.devices.findIndex((d) => d.id === dev.id);
     if (i >= 0) state.devices[i] = dev; else state.devices.push(dev);
@@ -341,7 +269,8 @@ export function mount(root, ctx) {
     if (!d || d.locked) return;
     await busy(btn, async () => {
       try {
-        const res = await put(`/api/devices/${enc(id)}`, deviceBody(d, { enabled: !d.enabled }), { signal: ac.signal });
+        const body = { name: d.name, bus: d.bus, unit: d.unit, preset: d.preset || null, interval: d.interval, enabled: !d.enabled };
+        const res = await put(`/api/devices/${enc(id)}`, body, { signal: ac.signal });
         if (destroyed) return;
         toast(res.enabled ? `Włączono "${res.name}"` : `Wyłączono "${res.name}"`);
         upsert(res);
@@ -465,7 +394,7 @@ export function mount(root, ctx) {
     function suggestId() {
       if (!isNew || idTouched) return;
       const taken = new Set(state.devices.map((x) => x.id));
-      idIn.value = nameIn.value.trim() ? uniqueId(slugify(nameIn.value), taken) : '';
+      idIn.value = nameIn.value.trim() ? uniqueId(slugify(nameIn.value), taken, 'licznik') : '';
       if (idIn.getAttribute('aria-invalid')) fieldError(idIn, null);
     }
     nameIn.addEventListener('input', suggestId);
@@ -676,14 +605,14 @@ export function mount(root, ctx) {
     }
 
     // układ
-    const unlockNote = locked ? h('div', { class: 'notice notice-warn' },
+    const lockNote = locked ? h('div', { class: 'notice notice-warn' },
       h('strong', null, 'Tylko do odczytu. '),
       'To urządzenie jest zdefiniowane parametrami uruchomienia aplikacji (wbudowany symulator, ',
       h('code', null, '--sim-preset'), ' lub ', h('code', null, '--preset'), '). Aby je zmienić, uruchom aplikację ponownie z innymi parametrami. ',
       'Możesz też dodać własne urządzenie na tym samym połączeniu.') : null;
 
     const formEl = h('form', { class: 'v-devices dev-form', novalidate: true, onsubmit: submit },
-      unlockNote,
+      lockNote,
       formErr,
       h('div', { class: 'form-grid' },
         field('Nazwa', nameIn, isNew ? 'Wyświetlana na dashboardzie' : null),
@@ -714,16 +643,16 @@ export function mount(root, ctx) {
       body: formEl,
       onClose: () => {
         if (detectAc) detectAc.abort();
-        if (form && form.m === m) form = null;
+        if (form === m) form = null;
         // po zamknięciu formularza z linku (#devices?new=1) nie otwieraj go ponownie przy odświeżeniu
         if (!destroyed && /^#devices\?/.test(location.hash)) history.replaceState(history.state, '', '#devices');
       },
     });
-    form = { m, close: () => m.close() };
+    form = m;
     if (locked) cancelBtn.focus();
     // świeże listy połączeń i presetów (mogły się zmienić w innym widoku lub karcie)
     Promise.all([loadBuses(), loadPresets()]).then(() => {
-      if (destroyed || !form || form.m !== m) return;
+      if (destroyed || form !== m) return;
       fillBusSelect(busSel.value || d.bus);
       fillPresetSelect(presetSel.value);
       updateHints();

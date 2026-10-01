@@ -120,11 +120,11 @@ def test_exception_mapping():
 
 
 def test_pymodbus_api_detected():
-    info = T.pymodbus_info()
-    assert info["version"] == T.pymodbus_version()
+    import pymodbus
+    assert T.pymodbus_version() == pymodbus.__version__
     from pymodbus.client import ModbusTcpClient
-    assert info["unit_kw"] in inspect.signature(ModbusTcpClient.read_holding_registers).parameters
-    assert info["client_retries"] in (0, 1)
+    assert T._pm()["unit_kw"] in inspect.signature(ModbusTcpClient.read_holding_registers).parameters
+    assert T._pm()["retries"] in (0, 1)
     ports = T.list_serial_ports()
     assert isinstance(ports, list) and all({"device", "description", "hwid"} <= set(p) for p in ports)
 
@@ -443,7 +443,6 @@ def test_bus_manager_identity_and_replacement(server):
     cfg = TransportConfig(host=host, port=port)
     bus = mgr.get(cfg)
     assert mgr.get(TransportConfig.from_dict(cfg.to_dict())) is bus
-    assert mgr.get(cfg.to_dict()) is bus
     assert bus.read_registers(1, "input", 0, 2) == EXPECTED[:2]
     # timeout/retries/delay zmieniają się w locie, bez zrywania połączenia
     soft = TransportConfig(host=host, port=port, timeout=0.5, retries=0, delay_ms=5)
@@ -527,7 +526,7 @@ def test_serial_rtu(pty_pair):
         dt = time.monotonic() - t0
         assert e.value.kind == "timeout" and dt < 0.3 * 2 * 2 + 0.3, dt
         assert bus.read_registers(1, "input", 2, 6) == EXPECTED[2:]
-        legacy = T.pymodbus_info()["client_retries"] == 1  # 3.6/3.7 same zamykają port po timeoucie
+        legacy = T._pm()["retries"] == 1  # 3.6/3.7 same zamykają port po timeoucie
         assert bus.stats()["connects"] == 1 or legacy  # port zostaje otwarty mimo błędów
     finally:
         bus.close()

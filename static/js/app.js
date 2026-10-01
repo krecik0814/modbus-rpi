@@ -158,8 +158,7 @@ const health = new Poller(async () => {
 function setHealth(cls, text) {
   $('#health-dot').className = 'conn-dot ' + cls;
   $('#health-text').textContent = text;
-  const top = $('#topbar-status');
-  top.replaceChildren(h('span', { class: 'conn-dot ' + cls }), text);
+  $('#topbar-status').replaceChildren(h('span', { class: 'conn-dot ' + cls }), text);
 }
 
 // ── start ────────────────────────────────────────────────────

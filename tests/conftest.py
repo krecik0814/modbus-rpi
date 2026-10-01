@@ -1,3 +1,4 @@
+import contextlib
 import sys
 from pathlib import Path
 
@@ -51,6 +52,10 @@ class FakeBus:
     def put(self, function, address, regs):
         for i, r in enumerate(regs):
             self.image[(function, address + i)] = r
+
+    @contextlib.contextmanager
+    def override(self, timeout=None, retries=None):
+        yield self
 
 
 @pytest.fixture

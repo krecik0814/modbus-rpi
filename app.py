@@ -9,6 +9,7 @@ Uruchomienie:
 """
 
 import argparse
+import contextlib
 import logging
 import os
 import signal
@@ -90,7 +91,7 @@ def parse_args(argv=None):
     if sum(bool(x) for x in (args.serial, args.tcp, args.rtu_over_tcp)) > 1:
         p.error("podaj tylko jedno z: --serial, --tcp, --rtu-over-tcp")
     if (args.serial or args.tcp or args.rtu_over_tcp) and not args.sim:
-        args.no_sim = True  # jak w poprzednich wersjach: prawdziwe urządzenie = bez symulatora
+        args.no_sim = True  # prawdziwe urządzenie = bez symulatora (chyba że --sim)
     for opt in ("tcp", "rtu_over_tcp"):
         if getattr(args, opt):
             try:
@@ -170,7 +171,6 @@ class AppContext:
 
     def __init__(self, args):
         from modbus_dash.config import ConfigStore
-        from modbus_dash.history import HistoryDB
         from modbus_dash.mqtt import MqttPublisher
         from modbus_dash.planner import PresetReader
         from modbus_dash.poller import Poller
@@ -184,8 +184,7 @@ class AppContext:
         self.options = {
             "auth": tuple(args.auth.split(":", 1)) if args.auth else None,
             "allow_write": args.allow_write,
-            "allow_any_host": True,
-            "allowed_hosts": list(getattr(args, "allowed_host", None) or []),
+            "allowed_hosts": list(args.allowed_host),
             "no_history": args.no_history,
         }
         self.presets = PresetStore(Path(args.presets_dir), BASE_DIR / "presets" / "library")
@@ -196,7 +195,6 @@ class AppContext:
         self.poller = Poller(self.config, self.presets, self.buses, PresetReader, TransportConfig)
         self.jobs = JobManager()
         self.history = None
-        self._HistoryDB = HistoryDB
         self._apply_history()
         self.mqtt = MqttPublisher(self.config, self.poller)
         self.poller.add_listener(self.mqtt.on_sample)
@@ -209,10 +207,11 @@ class AppContext:
 
     def _apply_history(self):
         """Włącza/wyłącza zapis historii w SQLite zgodnie z konfiguracją (bez restartu)."""
+        from modbus_dash.history import HistoryDB
         h = self.config.get()["history"]
         want = h["enabled"] and not self.options["no_history"]
         if want and self.history is None:
-            self.history = self._HistoryDB(self.data_dir / "history.sqlite", h["bucket_seconds"], h["retention_days"])
+            self.history = HistoryDB(self.data_dir / "history.sqlite", h["bucket_seconds"], h["retention_days"])
             self.poller.add_listener(self.history.on_sample)
         elif not want and self.history is not None:
             db, self.history = self.history, None
@@ -320,11 +319,11 @@ def main(argv=None):
     if not args.auth and args.host not in ("127.0.0.1", "localhost", "::1"):
         log.info("Wskazówka: dashboard jest dostępny w sieci bez hasła - użyj --auth USER:HASŁO lub --host 127.0.0.1")
     try:
-        try:
-            if args.debug:
-                raise ImportError
-            from waitress import serve
-        except ImportError:
+        serve = None
+        if not args.debug:  # debugger Werkzeug działa tylko z serwerem Flask
+            with contextlib.suppress(ImportError):
+                from waitress import serve
+        if serve is None:
             app.run(host=args.host, port=args.port, debug=args.debug, use_reloader=False, threaded=True)
         else:
             # limit rozmiaru zapytania już w waitress: bez niego buforuje do 1 GB na dysku,

@@ -6,8 +6,8 @@ obsługuje trzy warianty ramek:
     tcp     Modbus TCP (nagłówek MBAP)
     rtu     ramki RTU z CRC16 przesyłane po TCP (jak bramki "RTU over TCP")
     serial  ramki RTU na porcie szeregowym (pyserial) - SerialSimServer;
-            para pty (make_pty) albo wirtualna para COM pozwala testować
-            klienta RTU bez sprzętu
+            pseudoterminal (--pty, make_pty) albo wirtualna para COM pozwala
+            sprawdzić klienta RTU bez sprzętu
 
 Rejestry urządzeń (SimDevice) wypełniane są z presetu: każdy rejestr presetu
 dostaje wartość wielkości kanonicznej (quantities.py) zakodowaną typem,
@@ -180,7 +180,7 @@ class Physics:
             pv *= max(0.0, 1 + g(0, 0.02))
 
         q = {}
-        v_ph, i_ph, P, Q, S, I = [], [], [], [], [], []
+        v_ph, i_ph, powers, reactives, apparents, currents = [], [], [], [], [], []
         for k, ph in enumerate(("l1", "l2", "l3")):
             ib, amp, period, pfb = _BASE_LOAD[k]
             i_base = max(0.01, wave(ib, amp, period) * (1 + g(0, 0.03)))
@@ -199,10 +199,10 @@ class Physics:
             ang = _V_ANGLES[k] + g(0, 0.2)
             v_ph.append(cmath.rect(v, math.radians(ang)))
             i_ph.append(cmath.rect(i, math.radians(ang - phi)))
-            P.append(p)
-            Q.append(qr)
-            S.append(s)
-            I.append(i)
+            powers.append(p)
+            reactives.append(qr)
+            apparents.append(s)
+            currents.append(i)
             q[f"voltage_{ph}"] = v
             q[f"current_{ph}"] = i
             q[f"power_{ph}"] = p
@@ -217,9 +217,9 @@ class Physics:
         q["voltage_ln_avg"] = sum(abs(x) for x in v_ph) / 3
         q["voltage_ll_avg"] = (q["voltage_l12"] + q["voltage_l23"] + q["voltage_l31"]) / 3
         q["current_n"] = abs(sum(i_ph))
-        q["current_total"] = sum(I)
-        q["current_avg"] = sum(I) / 3
-        p_tot, q_tot, s_tot = sum(P), sum(Q), sum(S)
+        q["current_total"] = sum(currents)
+        q["current_avg"] = sum(currents) / 3
+        p_tot, q_tot, s_tot = sum(powers), sum(reactives), sum(apparents)
         q["power_total"] = p_tot
         q["power_import"], q["power_export"] = max(0.0, p_tot), max(0.0, -p_tot)
         q["reactive_total"] = q_tot
@@ -231,10 +231,10 @@ class Physics:
         # energie [kWh]: W * h / 1000
         e, h = self.energy, dt / 3600.0 / 1000.0
         for k, ph in enumerate(("l1", "l2", "l3")):
-            e[f"energy_import_{ph}" if P[k] > 0 else f"energy_export_{ph}"] += abs(P[k]) * h
+            e[f"energy_import_{ph}" if powers[k] > 0 else f"energy_export_{ph}"] += abs(powers[k]) * h
         tariff = "t2" if t % self.tariff_period >= self.tariff_period * 2 / 3 else "t1"
-        for k in ("energy_import", f"energy_import_{tariff}") if p_tot > 0 else \
-                 ("energy_export", f"energy_export_{tariff}"):
+        side = "import" if p_tot > 0 else "export"
+        for k in (f"energy_{side}", f"energy_{side}_{tariff}"):
             e[k] += abs(p_tot) * h
         e["energy_reactive_import" if q_tot >= 0 else "energy_reactive_export"] += abs(q_tot) * h
         e["energy_apparent"] += s_tot * h
@@ -257,14 +257,14 @@ class Physics:
 
         # moc szczytowa: średnia wykładnicza mocy pobieranej i największego prądu fazowego
         a = 1 - math.exp(-dt / self.demand_period)
-        p_imp, i_max = max(0.0, p_tot), max(I)
+        p_imp, i_max = max(0.0, p_tot), max(currents)
         self.p_demand = p_imp if self.p_demand is None else self.p_demand + (p_imp - self.p_demand) * a
         self.i_demand = i_max if self.i_demand is None else self.i_demand + (i_max - self.i_demand) * a
         self.p_demand_max = max(self.p_demand_max, self.p_demand)
         q["power_demand"] = self.p_demand
         q["power_demand_max"] = self.p_demand_max
         q["current_demand"] = self.i_demand
-        q["temperature"] = wave(27.0, 3.0, 900.0) + 0.05 * sum(I) + g(0, 0.05)
+        q["temperature"] = wave(27.0, 3.0, 900.0) + 0.05 * sum(currents) + g(0, 0.05)
         self.values = q
         return dict(q)
 
@@ -342,7 +342,7 @@ def _type_limit(dtype):
         return float("inf")
     count, _ = codec.DATA_TYPES[dtype]
     bits = 8 if dtype in ("int8", "uint8") else count * 16
-    return (1 << (bits - 1)) - 1 if not dtype.startswith("u") else (1 << bits) - 1
+    return (1 << bits) - 1 if dtype.startswith("u") else (1 << (bits - 1)) - 1
 
 
 class _ModbusEx(Exception):
@@ -360,7 +360,7 @@ class SimDevice:
     je nadpisać zapisem (jak rejestry konfiguracyjne).
     """
 
-    def __init__(self, unit, preset, strict=False, identity=None):
+    def __init__(self, unit, preset, strict=False):
         if isinstance(unit, bool) or not isinstance(unit, int) or not 0 <= unit <= 255:
             raise ValueError(f"nieprawidłowy adres urządzenia: {unit!r} (0-255)")
         regs = preset.get("registers") if isinstance(preset, dict) else None
@@ -392,9 +392,6 @@ class SimDevice:
             0x05: preset.get("model") or name,
             0x06: "Modbus Dash symulator",
         }
-        if identity:
-            self.identity.update(identity)
-        self.requests = 0
 
     def _store(self, spec, raw, img=None):
         try:
@@ -408,16 +405,15 @@ class SimDevice:
     def update(self, quantities):
         """Koduje wartości wielkości do rejestrów presetu (atomowo względem odczytów)."""
         q = phase_view(quantities, self.phases)
-        new = {"input": {}, "holding": {}}
         values = {}
         for spec, qkey, factor in self._sources:
             v = q.get(qkey)
             values[spec["key"]] = 0.0 if v is None else v * factor
+        new = {"input": {}, "holding": {}}
         factors = self._scale_registers(values, new)
-        for spec, qkey, factor in self._sources:
-            v = values[spec["key"]]
-            f = factors.get(spec.get("scale_from"), 1.0) if spec.get("scale_from") else 1.0
-            self._store(spec, codec.unscaled(v, spec["scale"] * f, spec["offset"]), new)
+        for spec, _, _ in self._sources:
+            f = factors.get(spec.get("scale_from"), 1.0)
+            self._store(spec, codec.unscaled(values[spec["key"]], spec["scale"] * f, spec["offset"]), new)
         with self.lock:
             self._regs["input"].update(new["input"])
             self._regs["holding"].update(new["holding"])
@@ -453,17 +449,11 @@ class SimDevice:
             img = self._regs[function]
             return [img.get(a, 0) for a in range(address, address + count)]
 
-    def write(self, address, values):
-        with self.lock:
-            for i, v in enumerate(values):
-                self._regs["holding"][address + i] = int(v) & 0xFFFF
-
     # ── obsługa PDU ────────────────────────────────────────────
     def handle_pdu(self, pdu):
         """Zapytanie PDU (kod funkcji + dane) -> odpowiedź PDU (także wyjątek)."""
         pdu = bytes(pdu)
         fc = pdu[0]
-        self.requests += 1
         try:
             handler = self._HANDLERS.get(fc)
             if handler is None:
@@ -621,14 +611,11 @@ class _SimBase:
 
     def __init__(self, devices=None):
         self.devices = devices if devices is not None else {}  # unit -> SimDevice
-        self.response_delay = 0.0  # s, opóźnienie odpowiedzi (testy timeoutów)
-        self.gateway_errors = False
+        self.response_delay = 0.0  # s, opóźnienie odpowiedzi (wolny licznik, --delay)
+        self.gateway_errors = False  # TCP: nieznany Unit ID -> wyjątek 0x0B jak bramka (--gateway-errors)
 
     def add_device(self, dev):
         self.devices[dev.unit] = dev
-
-    def remove_device(self, unit):
-        return self.devices.pop(unit, None)
 
     def process_pdu(self, unit, pdu, tcp=None):
         """Zapytanie PDU dla urządzenia unit -> odpowiedź PDU albo None (brak odpowiedzi)."""
@@ -754,10 +741,6 @@ class SimServer(_SimBase):
         if self._srv is not None:
             return tuple(self._srv.server_address[:2])
         return self.host, self.port
-
-    @property
-    def running(self):
-        return self._srv is not None
 
     def start(self):
         if self._srv is not None:
@@ -921,7 +904,8 @@ class SerialSimServer(_SimBase):
         self._running = True
         self._thread = threading.Thread(target=self._run, name="modbus-sim-serial", daemon=True)
         self._thread.start()
-        log.info("Symulator Modbus RTU @ %s %s", self.port, self.baudrate)
+        where = f"pty (fd {self.port})" if isinstance(self.port, int) else self.port
+        log.info("Symulator Modbus RTU @ %s %s", where, self.baudrate)
 
     def _run(self):
         io = self._io
@@ -965,49 +949,25 @@ class Simulator:
         self.physics = Physics(seed)
         self.server = SimServer(host, port, framing)
         self.interval = float(interval)
-        self.values = {}
-        self._physics_of = {}  # unit -> własna fizyka urządzenia
         self._serial = []
         self._stop = threading.Event()
         self._thread = None
         self._lock = threading.Lock()
 
-    @property
-    def address(self):
-        return self.server.address
-
-    @property
-    def devices(self):
-        return self.server.devices
-
-    def add_preset(self, unit, preset, strict=False, physics=None):
+    def add_preset(self, unit, preset, strict=False):
         """Dodaje urządzenie z presetem (znormalizowanym lub surowym). Zwraca SimDevice."""
         dev = SimDevice(unit, preset, strict)
         with self._lock:
-            if physics is not None:
-                self._physics_of[unit] = physics
-            else:
-                self._physics_of.pop(unit, None)
-            ph = physics or self.physics
-            dev.update(ph.values or ph.tick())
+            dev.update(self.physics.values or self.physics.tick())
             self.server.add_device(dev)
         return dev
-
-    def remove_device(self, unit):
-        with self._lock:
-            self._physics_of.pop(unit, None)
-            return self.server.remove_device(unit)
 
     def update(self):
         """Jeden krok: tick fizyki i zapis rejestrów wszystkich urządzeń."""
         with self._lock:
-            ticked = {id(self.physics): self.physics.tick()}
-            for unit, dev in list(self.server.devices.items()):
-                ph = self._physics_of.get(unit, self.physics)
-                if id(ph) not in ticked:
-                    ticked[id(ph)] = ph.tick()
-                dev.update(ticked[id(ph)])
-            self.values = ticked[id(self.physics)]
+            q = self.physics.tick()
+            for dev in list(self.server.devices.values()):
+                dev.update(q)
 
     def _loop(self):
         while not self._stop.wait(self.interval):
@@ -1060,6 +1020,11 @@ def main(argv=None):
     ap.add_argument("--baudrate", type=int, default=9600)
     ap.add_argument("--parity", choices=("N", "E", "O"), default="N")
     ap.add_argument("--stopbits", type=int, choices=(1, 2), default=1)
+    ap.add_argument("--pty", action="store_true",
+                    help="wirtualny port szeregowy (Linux/macOS): wypisuje ścieżkę do użycia jako --serial")
+    ap.add_argument("--delay", type=int, default=0, metavar="MS", help="opóźnienie każdej odpowiedzi (wolny licznik)")
+    ap.add_argument("--gateway-errors", action="store_true",
+                    help="TCP: zapytanie do nieznanego Unit ID dostaje wyjątek 0x0B, jak z bramki")
     ap.add_argument("--seed", type=int, default=None, help="ziarno losowania (powtarzalne wartości)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -1071,15 +1036,29 @@ def main(argv=None):
                 return c
         raise SystemExit(f"Nie znaleziono presetu: {name}")
 
+    if args.pty and not hasattr(os, "openpty"):
+        raise SystemExit("--pty działa tylko w systemach POSIX (Linux, macOS)")
+    if not 0 <= args.delay <= 60000:
+        raise SystemExit("--delay: 0-60000 ms")
     sim = Simulator(args.host, args.port, args.framing, seed=args.seed)
+    sim.server.gateway_errors = args.gateway_errors
     for i, name in enumerate(args.preset or ["simulator_3f"]):
         p = find(name)
         raw = json.loads(p.read_text(encoding="utf-8"))
         sim.add_preset(args.unit + i, normalize_preset(raw), strict=args.strict)
         log.info("Urządzenie %d: %s", args.unit + i, raw.get("name") or p)
     sim.start(tcp=bool(args.port))
+    servers, pty_fds = [sim.server], []
     if args.serial:
-        sim.serve_serial(args.serial, args.baudrate, args.parity, args.stopbits)
+        servers.append(sim.serve_serial(args.serial, args.baudrate, args.parity, args.stopbits))
+    if args.pty:
+        master, slave, path = make_pty()
+        pty_fds = [master, slave]  # slave otwarty do końca - inaczej druga strona dostaje błędy
+        servers.append(sim.serve_serial(master, args.baudrate, args.parity, args.stopbits))
+        log.info("Wirtualny port szeregowy: %s (np. python app.py --serial %s --baudrate %d --parity %s)",
+                 path, path, args.baudrate, args.parity)
+    for srv in servers:
+        srv.response_delay = args.delay / 1000.0
     try:
         while True:
             time.sleep(3600)
@@ -1087,6 +1066,8 @@ def main(argv=None):
         pass
     finally:
         sim.stop()
+        for fd in pty_fds:
+            os.close(fd)
 
 
 if __name__ == "__main__":

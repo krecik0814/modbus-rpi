@@ -10,7 +10,7 @@ plan jest układany od nowa - jeden zły odczyt nie psuje planu na zawsze.
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from . import codec
 from .presets import MODBUS_MAX_REGS
@@ -21,10 +21,12 @@ _TRANSIENT_CODES = (0x05, 0x06)  # potwierdzenie / urządzenie zajęte - spróbu
 
 @dataclass
 class ReadBlock:
-    function: str          # "input" | "holding"
+    """Ciągły zakres rejestrów czytany jednym zapytaniem."""
+
+    function: str         # "input" | "holding"
     start: int
     count: int
-    keys: list = field(default_factory=list)
+    keys: list
     rejected: bool = False  # podział nic nie dał - czytamy w całości (do ponownego planowania)
 
     @property
@@ -116,7 +118,7 @@ class PresetReader:
         self._planned = time.monotonic()
 
     def read(self, bus, unit):
-        """Zwraca dict: values {key: float|None}, errors {key: str}, duration_ms, requests."""
+        """Zwraca dict: values {key: float|None}, errors {key: str}, duration_ms, requests, ok."""
         t0 = time.monotonic()
         if t0 - self._planned > REPLAN_SECONDS:
             self._replan()

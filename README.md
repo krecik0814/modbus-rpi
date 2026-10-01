@@ -380,6 +380,15 @@ python app.py --sim-framing rtu                                                 
 python -m modbus_dash.simulator --help                                          # samodzielny symulator
 ```
 
+Samodzielny symulator potrafi też udawać licznik na porcie szeregowym, także bez sprzętu: `--pty` tworzy wirtualny
+port (Linux, macOS) i wypisuje jego ścieżkę, którą podajesz dashboardowi jako `--serial`. `--delay MS` spowalnia
+odpowiedzi (wolny licznik), a `--gateway-errors` odpowiada na nieznany Unit ID wyjątkiem 0x0B, jak bramka.
+
+```bash
+python -m modbus_dash.simulator --port 0 --pty --preset eastron_sdm120   # "Wirtualny port szeregowy: /dev/pts/3"
+python app.py --no-sim --serial /dev/pts/3 --preset eastron_sdm120       # odczyt przez RTU, jak z prawdziwego licznika
+```
+
 Symulator wypełnia rejestry dowolnego presetu (typy, kolejność bajtów, skala), więc pozwala przetestować preset
 przed podłączeniem prawdziwego licznika.
 

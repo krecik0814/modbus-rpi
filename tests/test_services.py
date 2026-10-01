@@ -208,7 +208,7 @@ def test_history_bucket_continues_after_restart(tmp_path):
     db._seed_before = b + 900  # przedział zaczął się przed "startem"
     for i, v in enumerate([40.0, 50.0]):
         db.on_sample("d", None, {"ok": True, "ts": b + 10 + i, "values": {"p": v}})
-    db.flush()
+    db._flush_all()
     row = db._db.execute("SELECT avg, min, max, n FROM samples WHERE device='d' AND key='p'").fetchone()
     assert row == (30.0, 10.0, 50.0, 5)
     db.close()

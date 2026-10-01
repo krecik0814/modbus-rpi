@@ -18,6 +18,8 @@ MAX_BACKOFF = 30.0
 
 
 class DeviceRuntime:
+    """Stan urządzenia w pamięci: preset, czytnik, ostatni odczyt i bufor historii."""
+
     def __init__(self, dev_id, cfg, history_points):
         self.id = dev_id
         self.cfg = cfg
@@ -121,7 +123,7 @@ class Poller:
                 except Exception:  # noqa: BLE001
                     log.exception("Listener zmiany presetu")
 
-    def reload(self, *_):
+    def reload(self):
         """Synchronizuje urządzenia i wątki z bieżącą konfiguracją."""
         cfg = self.config.get()
         points = int(cfg["history"]["memory_points"])
@@ -145,24 +147,24 @@ class Poller:
         self._notify_preset(changed)
 
     def _start_workers(self, cfg):
-        with self._lock:
-            if not self._running:
-                return
-            wanted = {d["bus"] for d in cfg["devices"].values() if d["enabled"]}
-            for bus_id in list(self._workers):
-                if bus_id not in wanted:
-                    _, stop, wake = self._workers.pop(bus_id)
-                    stop.set()
-                    wake.set()
-            for bus_id in wanted:
-                if bus_id in self._workers:
-                    self._workers[bus_id][2].set()
-                    continue
-                stop, wake = threading.Event(), threading.Event()
-                th = threading.Thread(target=self._worker, args=(bus_id, stop, wake),
-                                      name=f"poller-{bus_id}", daemon=True)
-                self._workers[bus_id] = (th, stop, wake)
-                th.start()
+        """Wątek na każdą magistralę z włączonym urządzeniem (wywoływane pod self._lock)."""
+        if not self._running:
+            return
+        wanted = {d["bus"] for d in cfg["devices"].values() if d["enabled"]}
+        for bus_id in list(self._workers):
+            if bus_id not in wanted:
+                _, stop, wake = self._workers.pop(bus_id)
+                stop.set()
+                wake.set()
+        for bus_id in wanted:
+            if bus_id in self._workers:
+                self._workers[bus_id][2].set()
+                continue
+            stop, wake = threading.Event(), threading.Event()
+            th = threading.Thread(target=self._worker, args=(bus_id, stop, wake),
+                                  name=f"poller-{bus_id}", daemon=True)
+            self._workers[bus_id] = (th, stop, wake)
+            th.start()
 
     def _refresh_preset(self, rt):
         """Wczytuje preset urządzenia; True = zmiana (trzeba powiadomić słuchaczy)."""
@@ -226,7 +228,7 @@ class Poller:
         try:
             bus = self._bus_for(bus_id)
             res = reader.read(bus, rt.cfg["unit"])
-            error = None if res["ok"] else _first_error(res["errors"])
+            error = None if res["ok"] else next(iter(res["errors"].values()), "brak danych")
         except Exception as e:  # noqa: BLE001 - błąd konfiguracji/transportu nie może zabić wątku
             log.warning("Odczyt %s: %s", rt.id, e)
             res = {"values": {}, "errors": {}, "duration_ms": 0.0, "requests": 0, "ok": False}
@@ -333,9 +335,3 @@ class Poller:
             "keys": [all_keys[i] for i in idx],
             "points": [[round(ts, 3)] + [vals[i] for i in idx] for ts, vals in rows],
         }
-
-
-def _first_error(errors):
-    for msg in errors.values():
-        return msg
-    return "brak danych"

@@ -548,10 +548,10 @@ def test_roundtrip_synthetic_preset(server, physics_values, framing, strict):
 def test_simulator_wrapper_updates():
     sim = S.Simulator("127.0.0.1", 0, interval=0.05, seed=5)
     sim.add_preset(1, legacy_preset())
-    sim.add_preset(2, synthetic_raw(), strict=True, physics=S.Physics(seed=9))
+    sim.add_preset(2, synthetic_raw(), strict=True)
     sim.start()
     try:
-        bus = RawBus(sim.address)
+        bus = RawBus(sim.server.address)
         first = bus.read_registers(1, "input", 0, 70)
         deadline = time.monotonic() + 3
         while bus.read_registers(1, "input", 0, 70) == first:
@@ -562,11 +562,11 @@ def test_simulator_wrapper_updates():
         with pytest.raises(BusError) as e:
             bus.read_registers(2, "input", 0, 125)
         assert e.value.code == 2
-        assert set(sim.values) == set(quantities.QUANTITIES)
+        assert set(sim.physics.values) == set(quantities.QUANTITIES)
         bus.close()
     finally:
         sim.stop()
-    assert not sim.server.running
+    assert sim.server._srv is None
 
 
 # ── port szeregowy (pty) ──────────────────────────────────────

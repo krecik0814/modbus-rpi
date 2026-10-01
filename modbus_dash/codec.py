@@ -54,14 +54,6 @@ _TYPE_ALIASES = {
     "ulint": "uint64", "u64": "uint64",
 }
 
-# Etykiety do UI (kolumny skanera, CSV)
-ORDER_LABELS = {
-    "ABCD": "Big-endian (AB CD)",
-    "CDAB": "Word swap (CD AB)",
-    "BADC": "Byte swap (BA DC)",
-    "DCBA": "Little-endian (DC BA)",
-}
-
 
 def normalize_byte_order(order):
     """Zwraca kanoniczną nazwę kolejności (ABCD/CDAB/BADC/DCBA) albo rzuca ValueError."""
@@ -141,7 +133,7 @@ def decode(regs, dtype="float32", order="ABCD"):
 
 
 def encode(value, dtype="float32", order="ABCD"):
-    """Koduje liczbę do listy rejestrów (używane przez symulator i testy).
+    """Koduje liczbę do listy rejestrów (zapis wartości w symulatorze).
 
     Liczby całkowite są zaokrąglane i przycinane do zakresu typu.
     """
@@ -151,7 +143,7 @@ def encode(value, dtype="float32", order="ABCD"):
         value = float(value)
     else:
         bits = 8 if dtype in ("int8", "uint8") else count * 16
-        if math.isnan(value) or math.isinf(value):
+        if not math.isfinite(value):
             value = 0
         value = int(round(value))
         if dtype.startswith("u"):
@@ -166,7 +158,7 @@ def encode(value, dtype="float32", order="ABCD"):
 
 
 def is_finite(v):
-    return v is not None and not (isinstance(v, float) and (math.isnan(v) or math.isinf(v)))
+    return v is not None and (not isinstance(v, float) or math.isfinite(v))
 
 
 def scaled(raw, scale=1.0, offset=0.0):

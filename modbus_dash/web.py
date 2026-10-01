@@ -13,19 +13,22 @@ from urllib.parse import urlsplit
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 
-from . import __version__, metrics, mqtt, scanner
+from . import __version__, heuristics, metrics, mqtt, scanner
 from .config import ConfigError, validate_mqtt
 from .planner import PresetReader
-from .presets import PresetError, PresetFileError, valid_id
+from .presets import PresetError, PresetFileError, normalize_preset, valid_id
 from .transport import ModbusError, TransportConfig, list_serial_ports, pymodbus_version
 
 log = logging.getLogger("modbus-dash.web")
 
 SCAN_FUNCTIONS = ("input", "holding", "coil", "discrete")
 MAX_SCAN_SPAN = 2000
+PASSWORD_MASK = "********"  # hasło MQTT w odpowiedzi GET; ta sama wartość w PUT = bez zmiany hasła
 
 
 class ApiError(Exception):
+    """Błąd zwracany jako JSON {"error": komunikat, **extra} z podanym statusem HTTP."""
+
     def __init__(self, message, status=400, **extra):
         super().__init__(message)
         self.status = status
@@ -88,7 +91,14 @@ def _csv_safe(text):
     return "'" + text if text[:1] in ("=", "+", "-", "@", "\t", "\r") else text
 
 
+def _transport_cfg(bus):
+    """Wpis magistrali z konfiguracji -> TransportConfig (bez pól opisowych name i locked)."""
+    return TransportConfig.from_dict({k: v for k, v in bus.items() if k not in ("name", "locked")})
+
+
 def _int(data, name, default, lo, hi):
+    """Liczba całkowita z pola (także tekst dziesiętny albo "0x..."); ApiError, gdy to nie liczba
+    całkowita albo spoza lo-hi."""
     v = data.get(name, default)
     if isinstance(v, str) and v.strip():
         try:
@@ -105,6 +115,7 @@ def _int(data, name, default, lo, hi):
 
 
 def _float(data, name, default, lo, hi):
+    """Liczba z pola JSON; ApiError, gdy to nie liczba albo spoza lo-hi."""
     v = data.get(name, default)
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         raise ApiError(f"'{name}' musi być liczbą")
@@ -214,8 +225,7 @@ def create_app(ctx):
         buses = ctx.config.get()["buses"]
         if bus_id not in buses:
             raise ApiError(f"nieznana magistrala '{bus_id}'", 404)
-        cfg = {k: v for k, v in buses[bus_id].items() if k not in ("name", "locked")}
-        return ctx.buses.get(TransportConfig.from_dict(cfg))
+        return ctx.buses.get(_transport_cfg(buses[bus_id]))
 
     def bus_from_request(data):
         """Magistrala z pola 'bus' albo (zgodność wstecz) z host/port dla trybu TCP."""
@@ -224,16 +234,14 @@ def create_app(ctx):
         cfg = ctx.config.get()["buses"]["default"]
         if cfg["kind"] in ("rtu", "ascii") or "host" not in data:
             return bus_by_id("default")
-        if not opts.get("allow_any_host", True):
-            raise ApiError("łączenie z dowolnym hostem jest wyłączone - użyj skonfigurowanej magistrali", 403)
         host = str(data.get("host") or "127.0.0.1").strip()
         port = _int(data, "port", 502, 1, 65535)
         base = {k: v for k, v in cfg.items() if k in ("timeout", "retries", "delay_ms")}
         kind = cfg["kind"] if cfg["kind"] in ("tcp", "rtu_over_tcp", "udp") else "tcp"
         return ctx.buses.get(TransportConfig.from_dict({**base, "kind": kind, "host": host, "port": port}))
 
-    def unit_of(data, default=1):
-        return _int(data, "unit", default, 0, 255)
+    def unit_of(data):
+        return _int(data, "unit", 1, 0, 255)
 
     # ── strony ─────────────────────────────────────────────────
     @app.route("/")
@@ -254,8 +262,7 @@ def create_app(ctx):
             "pymodbus": pymodbus_version(),
             "python": platform.python_version(),
             "simulator": ctx.simulator_info,
-            "default_bus": {**default, "describe": TransportConfig.from_dict(
-                {k: v for k, v in default.items() if k not in ("name", "locked")}).describe()},
+            "default_bus": {**default, "describe": _transport_cfg(default).describe()},
             "features": {
                 "mqtt": mqtt.available(),
                 "history": ctx.history is not None,
@@ -347,7 +354,6 @@ def create_app(ctx):
 
     @app.post("/api/presets/validate")
     def api_validate_preset():
-        from .presets import normalize_preset
         try:
             norm = normalize_preset({k: v for k, v in _body().items() if not str(k).startswith("_")})
         except PresetError as e:
@@ -356,12 +362,9 @@ def create_app(ctx):
 
     # ── magistrale ─────────────────────────────────────────────
     def bus_entry(bus_id, b):
-        cfg = {k: v for k, v in b.items() if k not in ("name", "locked")}
-        tc = TransportConfig.from_dict(cfg)
-        stats = None
-        for snap in ctx.buses.snapshot():
-            if snap["key"] == tc.key():
-                stats = snap["stats"]
+        tc = _transport_cfg(b)
+        key = tc.key()
+        stats = next((snap["stats"] for snap in ctx.buses.snapshot() if snap["key"] == key), None)
         return {"id": bus_id, **b, "locked": bool(b.get("locked")), "describe": tc.describe(),
                 "stats": stats}
 
@@ -466,8 +469,7 @@ def create_app(ctx):
         mem["source"] = "memory"
         if ctx.history is None or source == "memory":
             return mem
-        now = time.time()
-        since = now - seconds
+        since = time.time() - seconds
         oldest = mem["points"][0][0] if mem["points"] else None
         if source == "auto" and oldest is not None and oldest <= since + 5:
             return mem  # bufor w pamięci obejmuje całe okno - pełna rozdzielczość
@@ -503,7 +505,7 @@ def create_app(ctx):
             w.writerow([datetime.fromtimestamp(row[0]).isoformat(sep=" ", timespec="seconds")] +
                        ["" if v is None else str(v).replace(".", ",") for v in row[1:]])
         name = f"{dev_id}_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}.csv"
-        return Response("﻿" + buf.getvalue(), mimetype="text/csv; charset=utf-8",
+        return Response("\ufeff" + buf.getvalue(), mimetype="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     # ── odczyt wg presetu (zgodność wstecz) ────────────────────
@@ -562,7 +564,6 @@ def create_app(ctx):
     @app.post("/api/scan/preset")
     def api_scan_preset():
         """Propozycja presetu z wierszy skanu (do edycji i zapisania przez użytkownika)."""
-        from . import heuristics
         data = _body()
         rows = data.get("registers")
         if not isinstance(rows, list):
@@ -648,36 +649,30 @@ def create_app(ctx):
     @app.get("/api/settings/mqtt")
     def api_get_mqtt():
         m = dict(ctx.config.get()["mqtt"])
-        m["password"] = "********" if m.get("password") else ""
+        m["password"] = PASSWORD_MASK if m.get("password") else ""
         return jsonify({"settings": m, "status": ctx.mqtt.status()})
 
     @app.put("/api/settings/mqtt")
     def api_put_mqtt():
         data = _body()
-        with ctx.config.write_lock:  # sprawdzenie i zapis razem - równoległa zmiana hosta nie przejdzie
-            return _put_mqtt(data)
-
-    def _put_mqtt(data):
-        stored = ctx.config.get()["mqtt"]
-        if data.get("password", "********") == "********":
-            # zapisane hasło (zamaskowane w GET) zostaje tylko dla tego samego brokera i konta -
-            # inaczej każdy z dostępem do API mógłby je przechwycić, wskazując własny serwer
-            try:
+        # sprawdzenie i zapis pod jedną blokadą - równoległa zmiana hosta nie przejdzie
+        with ctx.config.write_lock:
+            stored = ctx.config.get()["mqtt"]
+            if data.get("password", PASSWORD_MASK) == PASSWORD_MASK:
+                # zapisane hasło (zamaskowane w GET) zostaje tylko dla tego samego brokera i konta -
+                # inaczej każdy z dostępem do API mógłby je przechwycić, wskazując własny serwer
                 new = validate_mqtt({**stored, **{k: v for k, v in data.items() if k != "password"}}, strict=True)
-            except ConfigError as e:
-                raise ApiError(str(e)) from None
-            moved = any(new[k] != stored[k] for k in ("host", "port", "username", "tls"))
-            if moved and stored["password"]:
-                raise ApiError("zmieniono brokera, konto albo TLS - wpisz hasło MQTT ponownie", 400,
-                               field="password")
-            data["password"] = stored["password"]
-        ctx.config.put_section("mqtt", data)
-        return api_get_mqtt()
+                moved = any(new[k] != stored[k] for k in ("host", "port", "username", "tls"))
+                if moved and stored["password"]:
+                    raise ApiError("zmieniono brokera, konto albo TLS - wpisz hasło MQTT ponownie", field="password")
+                data["password"] = stored["password"]
+            ctx.config.put_section("mqtt", data)
+            return api_get_mqtt()
 
     @app.get("/api/settings/history")
     def api_get_history():
         return jsonify({"settings": ctx.config.get()["history"],
-                        "available": not ctx.options.get("no_history"),
+                        "available": not opts.get("no_history"),
                         "active": ctx.history is not None})
 
     @app.put("/api/settings/history")

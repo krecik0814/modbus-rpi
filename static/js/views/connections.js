@@ -1,8 +1,8 @@
 // Widok: Połączenia - magistrale RS-485 / Modbus TCP, test połączenia, formularz dodawania/edycji.
 
 import {
-  h, mount as fill, get, post, put, del, enc, toast, showError, Poller, modal, confirmDialog,
-  fmtAge, fmtTime, KINDS, field, select, markInvalid, pageHeader,
+  h, mount as fill, get, post, put, del, enc, toast, showError, Poller, modal, confirmDialog, fmtAge, fmtTime,
+  KINDS, field, select, pageHeader, uid, plural, slugify, uniqueId, busy, fieldError, parseIntStrict,
 } from '../core.js';
 
 const REFRESH_MS = 3000;
@@ -24,83 +24,15 @@ const DEFAULTS = {
 
 // ── pomocnicze ───────────────────────────────────────────────
 
-const uid = () => 'f' + Math.random().toString(36).slice(2, 10);
-const num = (v, d = 2) => Number(v).toLocaleString('pl-PL', { maximumFractionDigits: d });
+const num = (v, d) => Number(v).toLocaleString('pl-PL', { maximumFractionDigits: d });
 
-function plural(n, one, few, many) {
-  const n10 = n % 10, n100 = n % 100;
-  if (n === 1) return one;
-  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
-  return many;
-}
-
-function slugify(text) {
-  const pl = { ą: 'a', ć: 'c', ę: 'e', ł: 'l', ń: 'n', ó: 'o', ś: 's', ź: 'z', ż: 'z' };
-  return String(text || '').toLowerCase()
-    .replace(/[ąćęłńóśźż]/g, (c) => pl[c])
-    .normalize('NFD').replace(/\p{Mn}/gu, '')
-    .replace(/[^a-z0-9_-]+/g, '-').replace(/-{2,}/g, '-')
-    .replace(/^[-_]+/, '').slice(0, 32).replace(/[-_]+$/, '');
-}
-
-function uniqueId(base, taken) {
-  const id = base || 'magistrala';
-  if (!taken.has(id)) return id;
-  for (let i = 2; i < 1000; i++) {
-    const suffix = '-' + i;
-    const cand = id.slice(0, 32 - suffix.length).replace(/[-_]+$/, '') + suffix;
-    if (!taken.has(cand)) return cand;
-  }
-  return id;
-}
-
-/** Przycisk w stanie "zajęty" na czas fn(); drugie kliknięcie jest ignorowane. */
-async function busy(btn, fn) {
-  if (btn.dataset.busy) return undefined;
-  btn.dataset.busy = '1';
-  btn.disabled = true;
-  btn.setAttribute('aria-busy', 'true');
-  const sp = h('span', { class: 'spinner', 'aria-hidden': 'true' });
-  btn.prepend(sp);
-  try {
-    return await fn();
-  } finally {
-    sp.remove();
-    delete btn.dataset.busy;
-    btn.disabled = false;
-    btn.removeAttribute('aria-busy');
-  }
-}
-
-function fieldError(control, msg) {
-  markInvalid(control, !!msg);
-  const f = control.closest('.field');
-  if (!f) return;
-  let e = f.querySelector('.field-err');
-  if (!msg) {
-    if (e) e.remove();
-    control.removeAttribute('aria-errormessage');
-    return;
-  }
-  if (!e) {
-    e = h('span', { class: 'field-err', id: control.id + '-err' });
-    f.append(e);
-  }
-  e.textContent = msg;
-  control.setAttribute('aria-errormessage', e.id);
-}
-
-function parseIntStrict(s) {
-  s = String(s ?? '').trim();
-  return /^\d+$/.test(s) ? parseInt(s, 10) : null;
-}
 function parseDecimal(s) {
   s = String(s ?? '').trim().replace(',', '.');
   if (!s || !/^\d*\.?\d+$/.test(s)) return null;
   return Number(s);
 }
 
-/** Wynik testu połączenia: {ok, error, ms}. */
+/** Opis wyniku testu połączenia (res: {ok, error, ms, note}). */
 function pingResult(res, unit, kind) {
   const ms = res.ms != null ? ` (${num(res.ms, 0)} ms)` : '';
   if (res.ok && res.note) {
@@ -181,7 +113,6 @@ export function mount(root, ctx) {
       if (e.name !== 'AbortError') showError(e, 'Lista portów szeregowych: ');
       state.ports = state.ports || [];
     }
-    return state.ports;
   }
 
   // ── lista ─────────────────────────────────────────────────
@@ -232,12 +163,12 @@ export function mount(root, ctx) {
     const s = b.stats;
     if (!s) return h('span', { class: 'badge badge-muted', title: 'Nikt jeszcze nie korzystał z tego połączenia' }, 'Nieużywane');
     if (s.connected) return h('span', { class: 'badge badge-ok' }, 'Połączono');
-    if (s.last_error) return h('span', { class: 'badge badge-err' }, 'Rozłączono');
-    return h('span', { class: 'badge badge-muted' }, 'Rozłączono');
+    return h('span', { class: `badge ${s.last_error ? 'badge-err' : 'badge-muted'}` }, 'Rozłączono');
   }
 
   function updateCard(c, b) {
     const s = b.stats;
+    const nm = b.name || b.id;
     const users = usersOf(b.id);
     const titleId = `bus-${b.id}-title`;
     c.el.setAttribute('aria-labelledby', titleId);
@@ -270,7 +201,7 @@ export function mount(root, ctx) {
     fill(c.body,
       h('div', { class: 'bus-head' },
         h('div', { class: 'bus-title' },
-          h('h3', { id: titleId }, b.name || b.id),
+          h('h3', { id: titleId }, nm),
           h('span', { class: 'mono small muted' }, b.id)),
         h('div', { class: 'bus-badges' },
           b.locked ? h('span', { class: 'badge badge-muted plain', title: 'Ustawione parametrami uruchomienia' }, 'CLI') : null,
@@ -279,10 +210,10 @@ export function mount(root, ctx) {
 
     const editLbl = b.locked ? 'Szczegóły' : 'Edytuj';
     c.btns.edit.querySelector('.lbl').textContent = editLbl;
-    c.btns.edit.setAttribute('aria-label', `${editLbl} ${b.name || b.id}`);
-    c.btns.add.setAttribute('aria-label', `Dodaj urządzenie na ${b.name || b.id}`);
-    c.btns.test.setAttribute('aria-label', `Testuj ${b.name || b.id}`);
-    c.btns.remove.setAttribute('aria-label', `Usuń ${b.name || b.id}`);
+    c.btns.edit.setAttribute('aria-label', `${editLbl} ${nm}`);
+    c.btns.add.setAttribute('aria-label', `Dodaj urządzenie na ${nm}`);
+    c.btns.test.setAttribute('aria-label', `Testuj ${nm}`);
+    c.btns.remove.setAttribute('aria-label', `Usuń ${nm}`);
     const cantDelete = b.locked || b.id === 'default';
     if (!c.btns.remove.dataset.busy) c.btns.remove.disabled = cantDelete;
     c.btns.remove.hidden = cantDelete;
@@ -333,9 +264,9 @@ export function mount(root, ctx) {
   function openPing(b) {
     if (!b) return;
     closeOpen();
-    const firstUnit = usersOf(b.id)[0];
-    const unitIn = h('input', { type: 'number', id: uid(), min: 0, max: 255, step: 1, inputmode: 'numeric',
-      value: firstUnit ? String(firstUnit.unit) : '', placeholder: 'np. 1' });
+    const firstUser = usersOf(b.id)[0];
+    const unitIn = h('input', { type: 'number', min: 0, max: 255, step: 1, inputmode: 'numeric',
+      value: firstUser ? String(firstUser.unit) : '', placeholder: 'np. 1' });
     const result = h('div', { class: 'ping-out', 'aria-live': 'polite' });
     const go = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Testuj');
     const formEl = h('form', { class: 'v-connections ping-form', novalidate: true, onsubmit: async (ev) => {
@@ -374,16 +305,17 @@ export function mount(root, ctx) {
     closeOpen();
     const isNew = !bus;
     const locked = !!(bus && bus.locked);
-    const b = { ...DEFAULTS, ...(bus || {}) };
+    const b = { ...DEFAULTS, ...bus };
+    const firstUser = bus && usersOf(bus.id)[0];
     let idTouched = false;
 
-    const nameIn = h('input', { type: 'text', id: uid(), maxlength: 64, autocomplete: 'off', value: b.name || '', placeholder: 'np. RS-485 rozdzielnia' });
-    const idIn = h('input', { type: 'text', id: uid(), maxlength: 32, autocomplete: 'off', spellcheck: 'false', class: 'mono',
+    const nameIn = h('input', { type: 'text', maxlength: 64, autocomplete: 'off', value: b.name || '', placeholder: 'np. RS-485 rozdzielnia' });
+    const idIn = h('input', { type: 'text', maxlength: 32, autocomplete: 'off', spellcheck: 'false', class: 'mono',
       value: isNew ? '' : b.id, placeholder: 'np. rs485', readonly: !isNew });
-    const kindSel = select(Object.entries(KINDS), b.kind, { id: uid() });
+    const kindSel = select(Object.entries(KINDS), b.kind);
     const kindHint = h('span');
-    const hostIn = h('input', { type: 'text', id: uid(), autocomplete: 'off', spellcheck: 'false', value: b.host || '', placeholder: 'np. 192.168.1.50' });
-    const portIn = h('input', { type: 'number', id: uid(), min: 1, max: 65535, step: 1, inputmode: 'numeric', value: String(b.port || 502) });
+    const hostIn = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', value: b.host || '', placeholder: 'np. 192.168.1.50' });
+    const portIn = h('input', { type: 'number', min: 1, max: 65535, step: 1, inputmode: 'numeric', value: String(b.port || 502) });
     const portHint = h('span');
     const listId = uid();
     const serialIn = h('input', { type: 'text', id: uid(), autocomplete: 'off', spellcheck: 'false', list: listId, value: b.serial_port || '', placeholder: '/dev/ttyUSB0' });
@@ -392,17 +324,17 @@ export function mount(root, ctx) {
       html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>' });
     const portChips = h('div', { class: 'port-chips' });
     const bauds = BAUDRATES.includes(Number(b.baudrate)) ? BAUDRATES : [...BAUDRATES, Number(b.baudrate)].sort((x, y) => x - y);
-    const baudSel = select(bauds.map((v) => [String(v), String(v)]), String(b.baudrate), { id: uid() });
-    const paritySel = select(PARITIES, b.parity, { id: uid() });
-    const stopSel = select([['1', '1'], ['2', '2']], String(b.stopbits), { id: uid() });
-    const byteSel = select([['8', '8'], ['7', '7']], String(b.bytesize), { id: uid() });
+    const baudSel = select(bauds.map((v) => [String(v), String(v)]), String(b.baudrate));
+    const paritySel = select(PARITIES, b.parity);
+    const stopSel = select([['1', '1'], ['2', '2']], String(b.stopbits));
+    const byteSel = select([['8', '8'], ['7', '7']], String(b.bytesize));
     const serialPreview = h('span', { class: 'mono' });
     const echoIn = h('input', { type: 'checkbox', id: uid(), checked: !!b.local_echo });
-    const timeoutIn = h('input', { type: 'text', id: uid(), inputmode: 'decimal', autocomplete: 'off', value: String(b.timeout).replace('.', ',') });
-    const retriesIn = h('input', { type: 'number', id: uid(), min: 0, max: 10, step: 1, inputmode: 'numeric', value: String(b.retries) });
-    const delayIn = h('input', { type: 'number', id: uid(), min: 0, max: 5000, step: 1, inputmode: 'numeric', value: String(b.delay_ms) });
+    const timeoutIn = h('input', { type: 'text', inputmode: 'decimal', autocomplete: 'off', value: String(b.timeout).replace('.', ',') });
+    const retriesIn = h('input', { type: 'number', min: 0, max: 10, step: 1, inputmode: 'numeric', value: String(b.retries) });
+    const delayIn = h('input', { type: 'number', min: 0, max: 5000, step: 1, inputmode: 'numeric', value: String(b.delay_ms) });
     const testUnitIn = h('input', { type: 'number', id: uid(), min: 0, max: 255, step: 1, inputmode: 'numeric', placeholder: 'np. 1',
-      value: bus && usersOf(bus.id)[0] ? String(usersOf(bus.id)[0].unit) : '' });
+      value: firstUser ? String(firstUser.unit) : '' });
     const testBtn = h('button', { class: 'btn btn-ghost', type: 'button', onclick: test }, 'Testuj połączenie');
     const testOut = h('div', { class: 'ping-out', 'aria-live': 'polite' });
     const formErr = h('div', { class: 'notice notice-err', role: 'alert', hidden: true });
@@ -467,7 +399,7 @@ export function mount(root, ctx) {
     function suggestId() {
       if (!isNew || idTouched) return;
       const taken = new Set(state.buses.map((x) => x.id));
-      idIn.value = nameIn.value.trim() ? uniqueId(slugify(nameIn.value), taken) : '';
+      idIn.value = nameIn.value.trim() ? uniqueId(slugify(nameIn.value), taken, 'magistrala') : '';
       fieldError(idIn, null);
     }
     kindSel.addEventListener('change', updateKind);
@@ -620,7 +552,7 @@ export function mount(root, ctx) {
       lockNote,
       formErr,
       h('div', { class: 'form-grid' },
-        field('Nazwa', nameIn, null),
+        field('Nazwa', nameIn),
         field('Identyfikator', idIn, isNew ? 'Podpowiadany z nazwy; używany przez urządzenia' : 'Nie można zmienić'),
         field('Rodzaj połączenia', kindSel, kindHint, { class: 'field span-2' })),
       tcpGroup,
@@ -700,7 +632,7 @@ export function mount(root, ctx) {
       destroyed = true;
       poller.stop();
       ac.abort();
-      if (openModal) openModal.close();
+      closeOpen();
     },
   };
 }

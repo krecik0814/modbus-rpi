@@ -1,12 +1,9 @@
 // Modbus Dash - wspólna infrastruktura frontendu.
-// Zasada: dynamiczny tekst trafia do DOM wyłącznie przez textContent (h(), text())
-// albo po esc() - nigdy surowo do innerHTML.
+// Zasada: dynamiczny tekst trafia do DOM wyłącznie jako tekst (h(), mount(), textContent),
+// nigdy surowo do innerHTML.
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-
-const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
-export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 
 /**
  * Budowanie DOM: h('div', {class: 'x', onclick: fn, dataset: {id: 1}}, 'tekst', h('b', null, '!'))
@@ -31,7 +28,7 @@ export function h(tag, attrs, ...children) {
   return el;
 }
 
-export function append(el, children) {
+function append(el, children) {
   for (const c of children.flat(Infinity)) {
     if (c == null || c === false) continue;
     el.append(c instanceof Node ? c : document.createTextNode(String(c)));
@@ -47,7 +44,7 @@ export function mount(el, ...children) {
 
 // ── API ───────────────────────────────────────────────────────
 
-export class ApiError extends Error {
+class ApiError extends Error {
   constructor(message, status, data) {
     super(message);
     this.status = status;
@@ -56,7 +53,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body, signal } = {}) {
+async function api(path, { method = 'GET', body, signal } = {}) {
   const opts = { method, signal, headers: { Accept: 'application/json' } };
   if (body !== undefined) {
     opts.headers['Content-Type'] = 'application/json';
@@ -112,16 +109,15 @@ export function showError(e, prefix = '') {
  * Wstrzymuje się, gdy karta przeglądarki jest ukryta.
  */
 export class Poller {
-  constructor(fn, intervalMs, { pauseHidden = true } = {}) {
+  constructor(fn, intervalMs) {
     this.fn = fn;
     this.interval = intervalMs;
-    this.pauseHidden = pauseHidden;
     this.timer = null;
     this.running = false;
     this.busy = false;
     this._vis = () => {
       if (!this.running) return;
-      if (document.hidden && this.pauseHidden) this._clear();
+      if (document.hidden) this._clear();
       else if (!this.timer && !this.busy) this._schedule(0);
     };
   }
@@ -137,12 +133,11 @@ export class Poller {
     this._clear();
     document.removeEventListener('visibilitychange', this._vis);
   }
-  setInterval(ms) { this.interval = ms; }
   trigger() { if (this.running && !this.busy) { this._clear(); this._schedule(0); } }
   _clear() { if (this.timer) { clearTimeout(this.timer); this.timer = null; } }
   _schedule(ms) {
     this._clear();
-    if (!this.running || (this.pauseHidden && document.hidden)) return;
+    if (!this.running || document.hidden) return;
     this.timer = setTimeout(() => this._tick(), ms);
   }
   async _tick() {
@@ -156,6 +151,8 @@ export class Poller {
 }
 
 // ── zadania w tle (/api/jobs) ────────────────────────────────
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Uruchamia zadanie (startPromise -> job) i czeka na koniec; onProgress(job) przy każdej zmianie. */
 export async function runJob(startPromise, onProgress, { signal } = {}) {
@@ -172,13 +169,6 @@ export async function runJob(startPromise, onProgress, { signal } = {}) {
   }
   if (job.state === 'error') throw new ApiError(job.error || 'Zadanie zakończone błędem', 500, job);
   return job;
-}
-
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-export function debounce(fn, ms) {
-  let t;
-  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
 // ── preferencje (localStorage może być niedostępny) ──────────
@@ -201,6 +191,7 @@ export const store = {
  * modal({title, subtitle, body: Node|[Node], actions: [{label, class, onClick(close)}], wide, onClose,
  *        closeOnBackdrop})
  * Zamyka się Esc, kliknięciem w tło (o ile closeOnBackdrop) i przyciskiem ×; przywraca fokus.
+ * Zwraca {close, el}.
  */
 export function modal({ title, subtitle, body, actions = [], wide = false, onClose, closeOnBackdrop = true } = {}) {
   const prevFocus = document.activeElement;
@@ -231,7 +222,7 @@ export function modal({ title, subtitle, body, actions = [], wide = false, onClo
   document.addEventListener('keydown', onKey);
   const first = box.querySelector('input,select,textarea,.modal-foot .btn-primary,.modal-foot .btn-danger,.modal-foot .btn');
   (first || box).focus();
-  return { close, el: box, body: box.querySelector('.modal-body') };
+  return { close, el: box };
 }
 
 function trapFocus(e, box) {
@@ -245,8 +236,8 @@ function trapFocus(e, box) {
     (e.shiftKey ? last : first).focus();
     return;
   }
-  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  if (e.shiftKey && a === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && a === last) { e.preventDefault(); first.focus(); }
 }
 
 /** Okno potwierdzenia (text: napis albo węzeł DOM); zwraca Promise<boolean>. */
@@ -272,7 +263,7 @@ export function fmt(v, decimals = 2) {
   if (typeof v !== 'number') return String(v);
   return v.toLocaleString('pl-PL', { minimumFractionDigits: decimals, maximumFractionDigits: decimals, useGrouping: Math.abs(v) >= 10000 });
 }
-export const fmtHex = (n, pad = 4) => '0x' + Number(n).toString(16).toUpperCase().padStart(pad, '0');
+export const fmtHex = (n) => '0x' + Number(n).toString(16).toUpperCase().padStart(4, '0');
 export const fmtTime = (ts) => new Date(ts * 1000).toLocaleTimeString('pl-PL');
 export const fmtDateTime = (ts) => new Date(ts * 1000).toLocaleString('pl-PL');
 export function fmtAge(sec) {
@@ -367,12 +358,12 @@ export function download(filename, text, mime = 'text/plain') {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-/** Pole CSV: cudzysłowy, gdy trzeba; ochrona przed formułami arkusza. */
-export function csvCell(v, sep = ';') {
+/** Pole CSV (separator ";"): cudzysłowy, gdy trzeba; ochrona przed formułami arkusza. */
+export function csvCell(v) {
   if (v == null) return '';
   let s = String(v);
   if (/^[=+\-@]/.test(s) && Number.isNaN(Number(s.replace(',', '.')))) s = "'" + s;
-  return /[";\n\r]/.test(s) || s.includes(sep) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  return /[";\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
 // ── formularze ───────────────────────────────────────────────
@@ -405,10 +396,86 @@ export function select(options, value, attrs = {}) {
   return el;
 }
 
-/** Odznacza pola z błędem walidacji. */
+/** Oznacza pole jako błędne (aria-invalid) albo zdejmuje oznaczenie. */
 export function markInvalid(el, invalid) {
   if (invalid) el.setAttribute('aria-invalid', 'true');
   else el.removeAttribute('aria-invalid');
+}
+
+/** Polska odmiana liczebnika: plural(n, 'rejestr', 'rejestry', 'rejestrów'). */
+export function plural(n, one, few, many) {
+  const n10 = n % 10, n100 = n % 100;
+  if (n === 1) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
+  return many;
+}
+
+/** Losowy identyfikator elementu (np. dla par label/for). */
+export const uid = (prefix = 'f') => prefix + Math.random().toString(36).slice(2, 10);
+
+/** Identyfikator z nazwy: małe litery bez polskich znaków, cyfry, '_' i '-', maks. 32 znaki. */
+export function slugify(text) {
+  const pl = { ą: 'a', ć: 'c', ę: 'e', ł: 'l', ń: 'n', ó: 'o', ś: 's', ź: 'z', ż: 'z' };
+  return String(text || '').toLowerCase()
+    .replace(/[ąćęłńóśźż]/g, (c) => pl[c])
+    .normalize('NFD').replace(/\p{Mn}/gu, '')
+    .replace(/[^a-z0-9_-]+/g, '-').replace(/-{2,}/g, '-')
+    .replace(/^[-_]+/, '').slice(0, 32).replace(/[-_]+$/, '');
+}
+
+/** Wolny identyfikator: base (albo fallback), a gdy zajęty - base-2, base-3... (maks. 32 znaki). */
+export function uniqueId(base, taken, fallback) {
+  const id = base || fallback;
+  if (!taken.has(id)) return id;
+  for (let i = 2; i < 1000; i++) {
+    const suffix = '-' + i;
+    const cand = id.slice(0, 32 - suffix.length).replace(/[-_]+$/, '') + suffix;
+    if (!taken.has(cand)) return cand;
+  }
+  return id;
+}
+
+/** Przycisk w stanie "zajęty" na czas fn(); drugie kliknięcie jest ignorowane. */
+export async function busy(btn, fn) {
+  if (btn.dataset.busy) return undefined;
+  btn.dataset.busy = '1';
+  btn.disabled = true;
+  btn.setAttribute('aria-busy', 'true');
+  const sp = h('span', { class: 'spinner', 'aria-hidden': 'true' });
+  btn.prepend(sp);
+  try {
+    return await fn();
+  } finally {
+    sp.remove();
+    delete btn.dataset.busy;
+    btn.disabled = false;
+    btn.removeAttribute('aria-busy');
+  }
+}
+
+/** Komunikat błędu pod polem formularza (z aria-errormessage); msg pusty - usuwa komunikat. */
+export function fieldError(control, msg) {
+  markInvalid(control, !!msg);
+  const f = control.closest('.field');
+  if (!f) return;
+  let e = f.querySelector('.field-err');
+  if (!msg) {
+    if (e) e.remove();
+    control.removeAttribute('aria-errormessage');
+    return;
+  }
+  if (!e) {
+    e = h('span', { class: 'field-err', id: control.id + '-err' });
+    f.append(e);
+  }
+  e.textContent = msg;
+  control.setAttribute('aria-errormessage', e.id);
+}
+
+/** Liczba całkowita bez znaku z pola tekstowego albo null. */
+export function parseIntStrict(s) {
+  s = String(s ?? '').trim();
+  return /^\d+$/.test(s) ? parseInt(s, 10) : null;
 }
 
 /** Pusty stan z opcjonalnymi przyciskami [{label, href|onClick, class}]. */
@@ -422,23 +489,4 @@ export function emptyState(text, buttons = []) {
 /** Nagłówek strony widoku z akcjami. */
 export function pageHeader(title, ...actions) {
   return h('div', { class: 'page-header' }, h('h2', null, title), h('div', { class: 'actions' }, actions));
-}
-
-/**
- * Wykonuje async fn z przyciskiem w stanie "zajęty" (spinner, disabled, aria-busy);
- * ponowne kliknięcie w trakcie jest ignorowane. Zwraca wynik fn.
- */
-export async function busy(btn, fn) {
-  if (!btn || btn.getAttribute('aria-busy') === 'true') return undefined;
-  const prev = [...btn.childNodes];
-  btn.setAttribute('aria-busy', 'true');
-  btn.disabled = true;
-  btn.prepend(h('span', { class: 'spinner', 'aria-hidden': 'true' }), ' ');
-  try {
-    return await fn();
-  } finally {
-    btn.replaceChildren(...prev);
-    btn.disabled = false;
-    btn.removeAttribute('aria-busy');
-  }
 }

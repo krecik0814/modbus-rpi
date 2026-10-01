@@ -1,7 +1,9 @@
 // Widok: Pomoc - poradnik po polsku ze spisem treści i tabelą obsługiwanych liczników (z /api/presets).
 // Treść sekcji to stałe, zaufane fragmenty HTML napisane tutaj; dane z API trafiają do DOM wyłącznie przez h()/textContent.
 
-import { h, mount as fill, get, pageHeader } from '../core.js';
+import {
+  h, mount as fill, get, pageHeader, plural,
+} from '../core.js';
 
 // ── treść (stałe HTML) ───────────────────────────────────────
 
@@ -371,14 +373,13 @@ const SECTIONS = [
   { id: 'security', title: 'Bezpieczeństwo', html: SECURITY },
   { id: 'troubleshooting', title: 'Rozwiązywanie problemów', html: TROUBLE },
   { id: 'cli', title: 'Argumenty CLI', build: cliTable },
-  { id: 'meters', title: 'Obsługiwane liczniki', build: null },   // budowane w mount (dane z API)
+  { id: 'meters', title: 'Obsługiwane liczniki' },   // budowane w mount (dane z API)
 ];
 
 // ── pomocnicze ───────────────────────────────────────────────
 
-const PL = { ą: 'a', ć: 'c', ę: 'e', ł: 'l', ń: 'n', ó: 'o', ś: 's', ź: 'z', ż: 'z' };
-const norm = (s) => String(s ?? '').toLowerCase().replace(/[ąćęłńóśźż]/g, (c) => PL[c])
-  .normalize('NFD').replace(/\p{Mn}/gu, '');
+/** Tekst do wyszukiwania: małe litery bez polskich znaków (ł nie rozkłada się w NFD). */
+const norm = (s) => String(s ?? '').toLowerCase().replace(/ł/g, 'l').normalize('NFD').replace(/\p{Mn}/gu, '');
 
 const REG_TYPES = { input: 'Input (FC04)', holding: 'Holding (FC03)' };
 
@@ -492,7 +493,7 @@ export function mount(root, ctx) {
   const wanted = ctx.params && ctx.params.s;
   if (wanted && sections.has(wanted)) requestAnimationFrame(() => { if (alive()) go(wanted, false); });
   else {
-    window.scrollTo({ top: 0, behavior: 'instant' });   // router nie przewija przy zmianie widoku
+    window.scrollTo({ top: 0, behavior: 'instant' });   // router przewija tylko przy zmianie widoku
     syncScroll();
   }
 
@@ -563,7 +564,7 @@ function metersSection(ctx, signal, alive) {
     if (!all) return;
     const tokens = norm(search.value).split(/\s+/).filter(Boolean);
     const rows = tokens.length ? all.filter((p) => tokens.every((t) => p._hay.includes(t))) : all;
-    count.textContent = tokens.length ? `Pokazano ${rows.length} z ${all.length}` : `${all.length} ${all.length === 1 ? 'model' : (all.length % 10 >= 2 && all.length % 10 <= 4 && (all.length % 100 < 12 || all.length % 100 > 14)) ? 'modele' : 'modeli'}`;
+    count.textContent = tokens.length ? `Pokazano ${rows.length} z ${all.length}` : `${all.length} ${plural(all.length, 'model', 'modele', 'modeli')}`;
     if (!rows.length) {
       fill(tableBox, h('div', { class: 'empty help-empty' },
         h('p', null, all.length ? `Brak liczników pasujących do „${search.value.trim()}”.` : 'Biblioteka presetów jest pusta.'),

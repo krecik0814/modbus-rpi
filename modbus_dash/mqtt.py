@@ -48,7 +48,7 @@ class MqttPublisher:
         self._published = 0
 
     # ── konfiguracja ───────────────────────────────────────────
-    def apply(self, *_):
+    def apply(self):
         """Stosuje konfigurację MQTT. Zmiana ustawień przełącza klienta w tle (stary klient
         może czekać na niedostępnego brokera - nie blokujemy zapisu ustawień ani odpytywania)."""
         cfg = self.config.get()["mqtt"]
@@ -61,7 +61,7 @@ class MqttPublisher:
             old_cfg, old_devices = self._cfg, set(self._discovered) | set(self._dev_online)
             orphans = set()
             if old_cfg and self._orphaned(old_cfg, cfg):
-                orphans = set().union(*self._discovered.values()) if self._discovered else set()
+                orphans = set().union(*self._discovered.values())
             old = self._detach_client()
             self._cfg = cfg
             self._gen += 1
@@ -122,7 +122,7 @@ class MqttPublisher:
             log.warning("MQTT: %s", self._last_error)
 
     def _detach_client(self):
-        """Odłącza bieżącego klienta (pod blokadą); zwraca (klient, czy_połączony)."""
+        """Odłącza bieżącego klienta (pod blokadą); zwraca (klient, czy_połączony) albo None."""
         client, connected = self._client, self._connected
         self._client = None
         self._connected = False
@@ -211,6 +211,7 @@ class MqttPublisher:
             if client is not self._client:
                 return
             self._connected = False
+            # args: v1 (rc[, properties]), v2 (flags, reason_code, properties)
             rc = args[-2] if len(args) >= 2 else (args[0] if args else 0)
             code = getattr(rc, "value", rc)
             if code:
@@ -243,8 +244,7 @@ class MqttPublisher:
     def _sweep(self, topic, payload):
         """Zapamiętana w brokerze encja discovery naszego węzła, której już nie publikujemy -> usuwamy
         ją (razem z retained availability/state urządzenia, jeśli to urządzenie już nie istnieje)."""
-        current = set().union(*self._discovered.values()) if self._discovered else set()
-        if topic in current:
+        if topic in set().union(*self._discovered.values()):
             return
         devices = set(self.poller.device_ids())
         mine = {f"{safe_key(self._cfg['topic_prefix'])}_{safe_key(d)}" for d in devices}
@@ -292,7 +292,7 @@ class MqttPublisher:
             if not (self._client and self._connected and self._cfg):
                 return
             if runtime is not None and (not runtime.cfg.get("enabled", True) or runtime.reader is None
-                                        or getattr(runtime, "preset_error", None)):
+                                        or runtime.preset_error):
                 # ręczny odczyt wyłączonego urządzenia albo odczyt w toku przy wyłączaniu:
                 # w HA urządzenie zostaje "offline", tak jak na dashboardzie
                 if self._dev_online.get(device_id) is not False:

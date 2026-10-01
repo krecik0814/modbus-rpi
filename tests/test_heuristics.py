@@ -51,6 +51,12 @@ def hint_of(value, order="ABCD", dtype="float32"):
 
 # ── guess() ──────────────────────────────────────────────────────────
 
+def guess(value, dtype="float32"):
+    """Najlepsze dopasowanie wielkości z alternatywami albo None."""
+    gs = H._guesses(value, codec.normalize_data_type(dtype).startswith("float"))
+    return {**gs[0], "alternatives": gs[1:]} if gs else None
+
+
 @pytest.mark.parametrize("value, kind", [
     (50.0, "frequency"), (49.98, "frequency"), (60.02, "frequency"), (47.0, "frequency"),
     (0.95, "pf"), (-0.9, "pf"), (1.0, "pf"), (0.45, "pf"),
@@ -61,40 +67,40 @@ def hint_of(value, order="ABCD", dtype="float32"):
     (12345.6, "energy"), (250000.5, "energy"),
 ])
 def test_guess_ranges_and_priority(value, kind):
-    g = H.guess(value)
+    g = guess(value)
     assert g is not None and g["guess"] == kind
     assert 0 < g["score"] <= 1
     assert g["label"] and isinstance(g["unit"], str)
 
 
 def test_guess_alternatives_keep_ambiguous_kinds():
-    g = H.guess(3.2)
+    g = guess(3.2)
     assert g["guess"] == "current"
     alts = [a["guess"] for a in g["alternatives"]]
     assert "thd" in alts and "power" in alts          # THD osiągalne jako alternatywa
     assert all(a["score"] <= g["score"] for a in g["alternatives"])
-    assert [a["guess"] for a in H.guess(12345.6)["alternatives"]] == ["power"]
-    assert "frequency" not in [a["guess"] for a in H.guess(230.1)["alternatives"]]
+    assert [a["guess"] for a in guess(12345.6)["alternatives"]] == ["power"]
+    assert "frequency" not in [a["guess"] for a in guess(230.1)["alternatives"]]
 
 
 def test_guess_scores_reflect_specificity():
-    assert H.guess(50.0)["score"] > H.guess(230.1)["score"] > H.guess(0.95)["score"]
-    assert H.guess(0.95)["score"] > H.guess(2.5)["score"] > H.guess(550.0)["score"]
-    assert H.guess(550.0)["score"] > H.guess(12345.6)["score"] > H.guess(50.0)["alternatives"][-1]["score"]
-    assert H.guess(230.0)["score"] > H.guess(120.0)["score"]      # 120 V (USA) mniej pewne
-    assert H.guess(50.0)["group"] == "system" and H.guess(50.0)["unit"] == "Hz"
+    assert guess(50.0)["score"] > guess(230.1)["score"] > guess(0.95)["score"]
+    assert guess(0.95)["score"] > guess(2.5)["score"] > guess(550.0)["score"]
+    assert guess(550.0)["score"] > guess(12345.6)["score"] > guess(50.0)["alternatives"][-1]["score"]
+    assert guess(230.0)["score"] > guess(120.0)["score"]      # 120 V (USA) mniej pewne
+    assert guess(50.0)["group"] == "system" and guess(50.0)["unit"] == "Hz"
 
 
 def test_guess_pf_only_for_float_types():
-    assert H.guess(0.95, "float32")["guess"] == "pf"
-    assert H.guess(0.95, "float64")["guess"] == "pf"
-    assert H.guess(0.95, "int16")["guess"] == "current"
-    assert H.guess(-0.9, "int32") is None
+    assert guess(0.95, "float32")["guess"] == "pf"
+    assert guess(0.95, "float64")["guess"] == "pf"
+    assert guess(0.95, "int16")["guess"] == "current"
+    assert guess(-0.9, "int32") is None
 
 
 @pytest.mark.parametrize("value", [0.0, -0.0, 1e-9, -3e-7, 2e9, -5e12, math.nan, math.inf, -math.inf, None, "x", True])
 def test_guess_rejects_zero_and_garbage(value):
-    assert H.guess(value) is None
+    assert guess(value) is None
 
 
 def test_classify():
@@ -139,7 +145,7 @@ def test_all_float_byte_orders(order, value, kind):
 def test_ambiguous_row_prefers_common_order():
     # 12345.6 ABCD -> w BADC wychodzi 3.1 (wygląda na prąd); słaba energia vs prąd: wygrywa ABCD
     row = H.analyze_registers(0, codec.encode(12345.6, "float32", "ABCD"))[0]
-    assert H.guess(row["decoded"]["float32"]["BADC"])["guess"] == "current"
+    assert guess(row["decoded"]["float32"]["BADC"])["guess"] == "current"
     assert (row["hint"]["byte_order"], row["hint"]["guess"]) == ("ABCD", "energy")
     row = H.analyze_registers(0, codec.encode(12345.6, "float32", "CDAB"))[0]
     assert (row["hint"]["byte_order"], row["hint"]["guess"]) == ("CDAB", "energy")
@@ -162,7 +168,7 @@ def test_best_order_wins_not_first_plausible():
     # ABCD daje "moc" 2052 W, ale CDAB daje napięcie 230.27 V - wygrywa lepsze dopasowanie
     regs = [0x4500, 0x4366]
     row = H.analyze_registers(0, regs)[0]
-    assert H.guess(row["decoded"]["float32"]["ABCD"])["guess"] == "power"
+    assert guess(row["decoded"]["float32"]["ABCD"])["guess"] == "power"
     assert row["hint"]["byte_order"] == "CDAB" and row["hint"]["guess"] == "voltage"
 
 
@@ -224,7 +230,7 @@ def test_integer_hints_with_scale(regs, kind, value, dtype, scale):
     h = H.analyze_registers(0, regs)[0]["hint"]
     assert (h["guess"], h["type"], h["scale"]) == (kind, dtype, scale)
     assert h["value"] == pytest.approx(value)
-    assert h["score"] < H.guess(value)["score"]       # zgadnięta skala obniża pewność
+    assert h["score"] < guess(value)["score"]       # zgadnięta skala obniża pewność
 
 
 def test_integer_hint_only_when_floats_are_garbage():

@@ -93,54 +93,39 @@ def classify(value, dtype="float32"):
     return "ok"
 
 
-def _round(v, digits=6):
-    """Zaokrąglenie do cyfr znaczących (JSON); NaN/inf -> None."""
+def _round(v):
+    """Zaokrąglenie do 6 cyfr znaczących (JSON); NaN/inf -> None."""
     if v is None or isinstance(v, int):
         return v
     if not math.isfinite(v):
         return None
-    return float(f"{v:.{digits}g}")
+    return float(f"{v:.6g}")
 
 
 def _guesses(value, is_float=True):
-    """Wszystkie pasujące rodzaje posortowane od najlepszego: [{guess, group, label, unit, score}]."""
+    """Pasujące rodzaje wielkości od najlepszego: [{guess, group, label, unit, score}].
+
+    guess = rodzaj (voltage, line_volt, current, power, pf, frequency, thd, energy),
+    group = grupa presetu (frequency -> system). cos φ tylko dla typów zmiennoprzecinkowych.
+    """
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return []
     if classify(value, "float32" if is_float else "int32") != "ok":
         return []
-    found = {}
-    for i, (kind, lo, hi, score, absolute, float_only) in enumerate(RANGES):
-        if kind in found or (float_only and not is_float):
-            continue
-        if lo <= (abs(value) if absolute else value) <= hi:
-            found[kind] = (score, i)
+    found = {}  # rodzaj -> wynik pierwszego (najlepszego) pasującego zakresu
+    for kind, lo, hi, score, absolute, float_only in RANGES:
+        if kind not in found and (is_float or not float_only) and lo <= (abs(value) if absolute else value) <= hi:
+            found[kind] = score
     out = []
-    for kind, (score, i) in sorted(found.items(), key=lambda kv: (-kv[1][0], kv[1][1])):
+    # sortowanie stabilne: przy równym wyniku decyduje kolejność w RANGES
+    for kind, score in sorted(found.items(), key=lambda kv: -kv[1]):
         label, unit, group, _ = KINDS[kind]
         out.append({"guess": kind, "group": group, "label": label, "unit": unit, "score": score})
     return out
 
 
-def _short(g, mult=1.0):
+def _short(g, mult):
     return {"guess": g["guess"], "label": g["label"], "unit": g["unit"], "score": round(g["score"] * mult, 3)}
-
-
-def guess(value, dtype="float32"):
-    """Zgaduje wielkość fizyczną po wartości.
-
-    Zwraca None (zero, śmieci, nic nie pasuje) albo {guess, group, label, unit,
-    score, alternatives}. guess = rodzaj (voltage, line_volt, current, power,
-    pf, frequency, thd, energy); group = grupa presetu (frequency -> system).
-    cos φ tylko dla typów zmiennoprzecinkowych.
-    """
-    try:
-        is_float = _is_float_type(dtype)
-    except ValueError:
-        is_float = True
-    gs = _guesses(value, is_float)
-    if not gs:
-        return None
-    return {**gs[0], "alternatives": [_short(g) for g in gs[1:]]}
 
 
 def _hint(gs, value, dtype, order, mult=1.0, scale=None, raw=None):
@@ -172,7 +157,8 @@ def _floats(r0, r1):
 def _candidates(r0, r1, floats=None):
     """Wszystkie sensowne interpretacje pary rejestrów, od najlepszej.
 
-    Najpierw float32: najwyższy wynik (+ premia dla częstych ABCD/CDAB), remis -> ABCD.
+    Najpierw float32: najwyższy wynik (+ premia dla częstych ABCD/CDAB), remis -> kolejność
+    wg codec.BYTE_ORDERS (ABCD pierwsza).
     Liczby całkowite (ze skalą) tylko wtedy, gdy dekodowania float32 to śmieci:
     żadne nie pasuje do zakresów, żadne nie jest zerem, a ABCD nie jest zwykłą
     małą liczbą (np. 0.005).
@@ -285,6 +271,8 @@ DERIVED = (
     ("reactive_total", "power", "sum", PSQ[2], 0.02),
 )
 _SWAPPED = ("BADC", "DCBA")
+# kolejność, którą udaje odczyt "na zakładkę" (przesunięty o jeden rejestr)
+_MIRROR = {"ABCD": "CDAB", "CDAB": "ABCD", "BADC": "DCBA", "DCBA": "BADC"}
 
 
 def _kinds(h):
@@ -307,9 +295,6 @@ def _same_order(count, a, b):
 
 def _family(h):
     return "float" if str(h.get("type", "")).startswith("float") else "int"
-
-
-_MIRROR = {"ABCD": "CDAB", "CDAB": "ABCD", "BADC": "DCBA", "DCBA": "BADC"}
 
 
 def _finite(v):
@@ -563,7 +548,7 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None, alig
 
     # podpowiedzi w innej kolejności: spróbuj zdekodować w dominującej
     for it in items:
-        addr, h, wide, _ = it
+        _, h, wide, _ = it
         if _width(h) > 1 and h["byte_order"] != order:
             alt = next((c for c in wide if c["byte_order"] == order), None)
             if alt:
@@ -600,22 +585,19 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None, alig
         registers[key] = spec
 
     keys = set(registers)
-    if keys & {"voltage_l2", "voltage_l3", "current_l2", "current_l3", "voltage_l12", "power_l2"}:
-        phases = 3
-    elif "voltage_l1" in keys:
-        phases = 1
-    else:
-        phases = 3
+    multi = keys & {"voltage_l2", "voltage_l3", "current_l2", "current_l3", "voltage_l12", "power_l2"}
+    phases = 1 if "voltage_l1" in keys and not multi else 3
     probe = next((k for k in ("voltage_l1", "frequency", "voltage_l12") if k in keys), None)
     if probe is None and registers:
         probe = min(registers, key=lambda k: registers[k]["address"])
 
+    warning = _ambiguity_text(order, parity, ambiguous) if ambiguous else None
     preset = {
         "name": str(name).strip() if name else f"Skan {time.strftime('%Y-%m-%d %H-%M')}",
         "manufacturer": "",
         "model": "",
         "description": "Wygenerowany automatycznie ze skanu rejestrów - sprawdź adresy, typy i jednostki."
-                       + (" " + _ambiguity_text(order, parity, ambiguous) if ambiguous else ""),
+                       + (" " + warning if warning else ""),
         "source": "Modbus Dash - skaner rejestrów",
         "phases": phases,
         "register_type": func,
@@ -626,7 +608,7 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None, alig
     if probe:
         preset["probe"] = probe
     if ambiguous:
-        preset["_warnings"] = [_ambiguity_text(order, parity, ambiguous)]
+        preset["_warnings"] = [warning]
         preset["_alternative"] = {"byte_order": ambiguous[0], "alignment": "odd" if ambiguous[1] else "even"}
     return preset
 

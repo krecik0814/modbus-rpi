@@ -4,6 +4,7 @@
 import {
   h, get, post, toast, showError, Poller, runJob, store, modal, confirmDialog, fmt, fmtHex, fmtTime,
   parseAddress, FUNCTIONS, GROUPS, download, csvCell, field, select, markInvalid, emptyState, pageHeader,
+  plural,
 } from '../core.js';
 
 const MAX_SPAN = 2000;
@@ -41,8 +42,7 @@ const dec = (s) => s.replace('.', ',');
 /** Do 6 cyfr znaczących; bardzo małe/duże w notacji wykładniczej (1,2e-38 = typowy objaw złej kolejności bajtów). */
 function fmtNum(v) {
   if (v == null) return '-';
-  if (typeof v !== 'number') return String(v);
-  if (!Number.isFinite(v)) return String(v);
+  if (typeof v !== 'number' || !Number.isFinite(v)) return String(v);
   if (v === 0) return '0';
   const a = Math.abs(v);
   if (a < 1e-4 || a >= 1e7) {
@@ -53,15 +53,9 @@ function fmtNum(v) {
 }
 const fmtInt = (v) => (v == null ? '-' : String(v));
 
-function plural(n, one, few, many) {
-  if (n === 1) return one;
-  const d = n % 10, dd = n % 100;
-  return d >= 2 && d <= 4 && !(dd >= 12 && dd <= 14) ? few : many;
-}
-
 const pad2 = (n) => String(n).padStart(2, '0');
-function localStamp(d, sep = ' ') {
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}${sep}${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+function localStamp(d) {
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
 function rangeText([a, b]) {
@@ -125,10 +119,13 @@ function spinnerLabel(text) {
 /** Przełącznik segmentowy (przyciski z aria-pressed). */
 function segmented(label, options, value, onChange) {
   const btns = options.map(([v, l]) => h('button', {
-    type: 'button', 'aria-pressed': String(v === value), onclick: () => { set(v); onChange(v); },
+    type: 'button', 'aria-pressed': String(v === value),
+    onclick: () => {
+      options.forEach(([ov], i) => btns[i].setAttribute('aria-pressed', String(ov === v)));
+      onChange(v);
+    },
   }, l));
-  function set(v) { options.forEach(([ov], i) => btns[i].setAttribute('aria-pressed', String(ov === v))); }
-  return { el: h('div', { class: 'segmented', role: 'group', 'aria-label': label }, btns), set };
+  return h('div', { class: 'segmented', role: 'group', 'aria-label': label }, btns);
 }
 
 function loadPrefs(params) {
@@ -150,14 +147,14 @@ function loadPrefs(params) {
 export function mount(root, ctx) {
   const prefs = loadPrefs(ctx.params || {});
   const save = () => store.set('scanner', prefs);
-  const canWrite = !!(ctx.info && ctx.info.features && ctx.info.features.write);
+  const canWrite = !!ctx.info?.features?.write;
 
   let alive = true;
   let busesReady = false;
   let busCtl = null;         // ładowanie listy magistral
   let scanCtl = null;        // ręczny skan w toku
-  let live = null;           // {req, poller, ctl, count}
-  let liveLog = [];          // [{text}] - gotowe linie CSV kolejnych skanów Live
+  let live = null;           // {req, poller, ctl, count, ms}
+  let liveLog = [];          // gotowe linie CSV kolejnych skanów Live (jeden napis na skan)
   let liveChars = 0;
   let logReq = null;         // parametry skanów w logu Live
   let last = null;           // {req, res, ts} - ostatni udany skan
@@ -180,8 +177,8 @@ export function mount(root, ctx) {
     prefs.step = v; save();
   });
   const stepLabelId = 'sc-step-' + Math.random().toString(36).slice(2);
-  stepSeg.el.setAttribute('aria-labelledby', stepLabelId);
-  const stepField = h('div', { class: 'field sc-step' }, h('span', { class: 'label', id: stepLabelId }, 'Krok'), stepSeg.el,
+  stepSeg.setAttribute('aria-labelledby', stepLabelId);
+  const stepField = h('div', { class: 'field sc-step' }, h('span', { class: 'label', id: stepLabelId }, 'Krok'), stepSeg,
     h('span', { class: 'hint' }, 'co 1 - wartości 32-bit pod nieparzystymi adresami'));
   const formErrors = h('ul', { class: 'errors', role: 'alert' });
   const busNotice = h('div');
@@ -213,7 +210,7 @@ export function mount(root, ctx) {
     prefs.onlyHints = onlyChk.checked; save(); applyOnly();
   } });
   const regControls = h('div', { class: 'sc-controls' },
-    h('span', { class: 'label' }, 'Widok'), viewSeg.el,
+    h('span', { class: 'label' }, 'Widok'), viewSeg,
     h('label', { class: 'sc-check' }, onlyChk, 'Tylko rozpoznane'));
   const resultsMeta = h('div', { class: 'small muted' });
   const liveLine = h('div', { class: 'status-line', hidden: true });
@@ -516,10 +513,10 @@ export function mount(root, ctx) {
     last = { req, res, ts };
     if (fromLive) {
       const text = csvLines(res, new Date(ts));
-      liveLog.push({ text });
+      liveLog.push(text);
       liveChars += text.length;
       while (liveLog.length > LOG_MAX_SCANS || (liveChars > LOG_MAX_CHARS && liveLog.length > 1)) {
-        liveChars -= liveLog.shift().text.length;
+        liveChars -= liveLog.shift().length;
       }
     }
     summary.setAttribute('aria-live', fromLive ? 'off' : 'polite'); // Live nie zasypuje czytnika ekranu
@@ -715,8 +712,9 @@ export function mount(root, ctx) {
   function csvLines(res, date) {
     const t = csvCell(localStamp(date));
     if (res.bits) {
-      return res.bits.map((b) => [t, b.address, fmtHex(b.address), b.value == null ? '' : b.value ? 1 : 0,
-        '', '', '', '', '', '', '', '', '', '', ''].join(';')).join('\r\n');
+      const pad = Array(CSV_HEAD.length - 4).fill('');   // bit trafia do kolumny raw, reszta pusta
+      return res.bits.map((b) => [t, b.address, fmtHex(b.address), b.value == null ? '' : b.value ? 1 : 0, ...pad]
+        .join(';')).join('\r\n');
     }
     return (res.registers || []).map((r) => {
       const d = r.decoded || {};
@@ -731,9 +729,9 @@ export function mount(root, ctx) {
   function exportCsv() {
     let body, n, req;
     if (liveLog.length) {
-      body = liveLog.map((e) => e.text).join('\r\n');
+      body = liveLog.join('\r\n');
       n = liveLog.length;
-      req = logReq || (last && last.req);
+      req = logReq;
     } else if (last) {
       body = csvLines(last.res, new Date(last.ts));
       n = 1;
@@ -745,7 +743,7 @@ export function mount(root, ctx) {
     const d = new Date();
     const stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
     const name = `skan_${req.bus}_u${req.unit}_${req.register_type}_${stamp}.csv`.replace(/[^\w.-]/g, '_');
-    download(name, '﻿' + CSV_HEAD.join(';') + '\r\n' + body + '\r\n', 'text/csv');
+    download(name, '\uFEFF' + CSV_HEAD.join(';') + '\r\n' + body + '\r\n', 'text/csv');
     toast(`Wyeksportowano ${n} ${plural(n, 'skan', 'skany', 'skanów')} do ${name}`);
   }
 
@@ -985,7 +983,7 @@ export function mount(root, ctx) {
         what = `Holding Registers (FC16), adresy ${a.address}-${endA} (${fmtHex(a.address)}-${fmtHex(endA)}): ${values.join(', ')}.`;
       }
       const ok = await confirmDialog(`${target} ${what} Zapis zmienia ustawienia urządzenia - upewnij się, że wiesz, co oznacza ten rejestr.`,
-        { title: 'Potwierdź zapis Modbus', okLabel: 'Zapisz', danger: true });
+        { title: 'Potwierdź zapis Modbus', okLabel: 'Zapisz' });
       if (!ok || !alive || writeCtl) return;
       const ctl = new AbortController();
       writeCtl = ctl;

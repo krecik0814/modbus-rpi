@@ -1,7 +1,8 @@
 // Widok: Integracje - MQTT / Home Assistant, historia w SQLite, Prometheus, REST API i informacje o systemie.
 
 import {
-  h, mount as fill, get, put, enc, toast, showError, Poller, field, select, markInvalid, pageHeader, fmtTime,
+  h, mount as fill, get, put, enc, toast, showError, Poller, field, select, pageHeader, fmtTime, uid,
+  parseIntStrict, plural, busy, fieldError,
 } from '../core.js';
 
 const STATUS_MS = 3000;
@@ -20,12 +21,6 @@ const PREFERRED_SAMPLE_KEYS = ['voltage_l1', 'voltage', 'current_l1', 'current',
 
 // ── pomocnicze ───────────────────────────────────────────────
 
-const uid = () => 'i' + Math.random().toString(36).slice(2, 10);
-
-function parseIntStrict(s) {
-  s = String(s ?? '').trim();
-  return /^\d+$/.test(s) ? parseInt(s, 10) : null;
-}
 
 /** Klucz jak w backendzie (quantities.safe_key) - używany w nazwach topiców MQTT. */
 function safeKey(s) {
@@ -40,13 +35,6 @@ function shq(s) {
   return /^[\w.,:/@%+=-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
-function plural(n, one, few, many) {
-  const n10 = n % 10, n100 = n % 100;
-  if (n === 1) return one;
-  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
-  return many;
-}
-
 function fmtDuration(sec) {
   if (sec < 120) return `${Math.round(sec)} s`;
   if (sec < 3600) return `${Math.round(sec / 60)} min`;
@@ -54,50 +42,18 @@ function fmtDuration(sec) {
   return `${(sec / 86400).toLocaleString('pl-PL', { maximumFractionDigits: 1 })} dni`;
 }
 
-/** Przycisk w stanie "zajęty" na czas fn(); kolejne kliknięcia są ignorowane. */
-async function busy(btn, fn) {
-  if (btn.dataset.busy) return undefined;
-  btn.dataset.busy = '1';
-  btn.disabled = true;
-  btn.setAttribute('aria-busy', 'true');
-  const sp = h('span', { class: 'spinner', 'aria-hidden': 'true' });
-  btn.prepend(sp);
-  try {
-    return await fn();
-  } finally {
-    sp.remove();
-    delete btn.dataset.busy;
-    btn.disabled = false;
-    btn.removeAttribute('aria-busy');
-  }
-}
-
-/** Komunikat błędu pod polem formularza (null = usuń). */
-function fieldError(control, msg) {
-  markInvalid(control, !!msg);
-  const f = control.closest('.field');
-  if (!f) return;
-  let e = f.querySelector('.field-err');
-  if (!msg) {
-    if (e) e.remove();
-    control.removeAttribute('aria-errormessage');
-    return;
-  }
-  if (!e) {
-    e = h('span', { class: 'field-err', id: control.id + '-err' });
-    f.append(e);
-  }
-  e.textContent = msg;
-  control.setAttribute('aria-errormessage', e.id);
-}
-
+/**
+ * Przycisk w stanie "zajęty" na czas fn(); kolejne kliknięcia są ignorowane.
+ * W odróżnieniu od busy() z core.js zachowuje tekst ustawiony w fn(), a dataset.busy
+ * sprawdza odpytywanie stanu MQTT.
+ */
 function clearFieldErrors(root) {
   root.querySelectorAll('[aria-invalid="true"]').forEach((c) => fieldError(c, null));
 }
 
 /** Pole wyboru z etykietą obok (i opcjonalną podpowiedzią pod spodem). */
 function checkRow(label, hint) {
-  const input = h('input', { type: 'checkbox', id: uid() });
+  const input = h('input', { type: 'checkbox', id: uid('i') });
   const hintEl = hint ? h('span', { class: 'hint', id: input.id + '-h' }, hint) : null;
   if (hintEl) input.setAttribute('aria-describedby', hintEl.id);
   return { input, el: h('div', { class: 'int-check' }, input, h('label', { for: input.id }, label), hintEl) };
@@ -145,31 +101,30 @@ export function mount(root, ctx) {
       timers.add(t);
       return t;
     },
-    copyBtn(getText, getSource, label = 'Kopiuj', aria) {
+    copyBtn(getText, getSource, aria) {
       const b = h('button', {
-        type: 'button', class: 'btn btn-ghost btn-sm int-copy-btn', 'aria-label': aria || null,
+        type: 'button', class: 'btn btn-ghost btn-sm int-copy-btn', 'aria-label': aria,
         onclick: async () => {
-          const ok = await copyText(getText(), getSource && getSource());
+          const ok = await copyText(getText(), getSource());
           if (!life.alive()) return;
           if (ok) {
             b.textContent = 'Skopiowano';
-            life.timeout(() => { b.textContent = label; }, 1500);
+            life.timeout(() => { b.textContent = 'Kopiuj'; }, 1500);
             toast('Skopiowano do schowka', 'ok', 1500);
           } else {
             toast('Nie udało się skopiować automatycznie - tekst jest zaznaczony, naciśnij Ctrl+C.', 'info', 6000);
           }
         },
-      }, label);
+      }, 'Kopiuj');
       return b;
     },
   };
 
-  const mqtt = mqttCard(ctx, life);
-  let info = null;
-  const hist = historyCard(ctx, life, () => info && info.render(ctx.info));
+  const info = infoCard(ctx, life);
+  const mqtt = mqttCard(life);
+  const hist = historyCard(ctx, life, () => info.render(ctx.info));
   const prom = prometheusCard(ctx, life);
   const rest = restCard(ctx, life);
-  info = infoCard(ctx, life);
 
   fill(root, h('div', { class: 'v-integrations' },
     pageHeader('Integracje'),
@@ -179,7 +134,7 @@ export function mount(root, ctx) {
       rest.el,
       info.el)));
 
-  window.scrollTo({ top: 0, behavior: 'instant' });   // router nie przewija przy zmianie widoku
+  window.scrollTo({ top: 0, behavior: 'instant' });   // router przewija tylko przy zmianie widoku
   mqtt.start();
   hist.load();
 
@@ -212,7 +167,6 @@ export function mount(root, ctx) {
 // ── MQTT / Home Assistant ────────────────────────────────────
 
 function mqttState(st, waitingLong) {
-  if (!st) return ['Brak danych', 'badge-muted'];
   if (!st.enabled) return ['Wyłączone', 'badge-muted'];
   if (!st.available) return ['Brak paho-mqtt', 'badge-err'];
   if (st.connected) return ['Połączono', 'badge-ok'];
@@ -220,10 +174,9 @@ function mqttState(st, waitingLong) {
   return ['Łączenie...', 'badge-info'];
 }
 
-function mqttCard(ctx, life) {
+function mqttCard(life) {
   let saved = null;            // ostatnie ustawienia z serwera
   let status = null;
-  let pollFails = 0;
   let lastPoll = null;
   let gen = 0;                 // zmienia się przy każdym zapisie - odrzuca spóźnione odpowiedzi odpytywania
   let waitingSince = null;     // od kiedy włączone i niepołączone (czas klienta)
@@ -311,7 +264,7 @@ function mqttCard(ctx, life) {
   const payloadPre = h('pre', { class: 'code int-payload' });
   const payloadNote = h('p', { class: 'small muted' });
   const subPre = h('pre', { class: 'code int-wrap' });
-  const subCopy = life.copyBtn(() => subPre.textContent, () => subPre, 'Kopiuj', 'Kopiuj polecenie mosquitto_sub');
+  const subCopy = life.copyBtn(() => subPre.textContent, () => subPre, 'Kopiuj polecenie mosquitto_sub');
   const topicsPanel = h('section', { class: 'int-panel', 'aria-labelledby': 'int-mqtt-tp' },
     h('div', { class: 'int-panel-head' }, h('h4', { class: 'int-sub', id: 'int-mqtt-tp' }, 'Przykładowe topiki'), devSelWrap),
     topicList,
@@ -435,13 +388,12 @@ function mqttCard(ctx, life) {
     let haV = cleanTopic(haPrefix.value);
     if (haOn && !haV) errs.push([haPrefix, 'Podaj prefiks discovery (zwykle homeassistant)']);
     else if (haOn && /[+#\s]/.test(haV)) errs.push([haPrefix, 'Prefiks nie może zawierać spacji ani znaków + i #']);
-    if (!haOn && (!haV || /[+#\s]/.test(haV))) haV = (saved && saved.ha_prefix) || 'homeassistant';
+    if (!haOn && (!haV || /[+#\s]/.test(haV))) haV = saved.ha_prefix || 'homeassistant';
     let password = pass.value;
-    if (!password || passClear.input.checked) {
-      password = saved && saved.password === MASK && !passClear.input.checked ? MASK : '';
-    }
-    const moved = saved && (hostV !== saved.host || portV !== saved.port
-      || user.value.trim() !== (saved.username || '') || tls.input.checked !== !!saved.tls);
+    if (passClear.input.checked) password = '';
+    else if (!password && saved.password === MASK) password = MASK;
+    const moved = hostV !== saved.host || portV !== saved.port
+      || user.value.trim() !== (saved.username || '') || tls.input.checked !== !!saved.tls;
     if (password === MASK && moved) {
       // serwer nie wyśle zapisanego hasła do innego brokera ani dla innego konta
       errs.push([pass, 'Zmieniono brokera, konto albo TLS - wpisz hasło ponownie (albo zaznacz „Usuń zapisane hasło”)']);
@@ -496,8 +448,10 @@ function mqttCard(ctx, life) {
     const prev = saved;
     saved = s;
     if (fromSave || first || (changed && !wasDirty)) fillForm(s);
-    else if (changed) { mergeUntouched(prev, s); updateDirty(); }
-    else updateDirty();
+    else {
+      if (changed) mergeUntouched(prev, s);
+      updateDirty();
+    }
     if (first) {
       formLoad.remove();
       fs.disabled = false;
@@ -512,12 +466,10 @@ function mqttCard(ctx, life) {
     try {
       const data = await get('/api/settings/mqtt', { signal: life.signal });
       if (!life.alive() || myGen !== gen || saveBtn.dataset.busy) return;
-      pollFails = 0;
       lastPoll = Date.now();
       applyServer(data, false);
     } catch (e) {
       if (e.name === 'AbortError' || !life.alive()) return;
-      pollFails++;
       if (!saved) {
         formLoad.replaceChildren(h('div', { class: 'notice notice-err' },
           h('strong', null, 'Nie udało się wczytać ustawień MQTT: '), e.message, ' Ponawiam co 3 s. ',
@@ -548,8 +500,7 @@ function mqttCard(ctx, life) {
     headBadge.className = 'badge ' + cls;
     paho.hidden = status.available;
 
-    const stBadge = h('span', { class: 'badge ' + cls }, label);
-    if (dd.state.textContent !== label) dd.state.replaceChildren(stBadge);
+    if (dd.state.textContent !== label) dd.state.replaceChildren(h('span', { class: 'badge ' + cls }, label));
     setText(dd.broker, `${saved.host || '-'}:${saved.port}${saved.tls ? ' (TLS)' : ''}${saved.username ? `, użytkownik ${saved.username}` : ''}`);
     const n = status.published || 0;
     setText(dd.published, `${n.toLocaleString('pl-PL')} ${plural(n, 'wiadomość', 'wiadomości', 'wiadomości')}`);
@@ -785,7 +736,7 @@ function historyCard(ctx, life, onChange) {
       ctx.info.features = ctx.info.features || {};
       ctx.info.features.history = active;
     }
-    if (onChange) onChange();
+    onChange();
     fillForm(saved);
     renderState();
   }
@@ -892,10 +843,10 @@ function prometheusCard(ctx, life) {
     h('div', { class: 'card-header' }, h('h3', { class: 'card-title', id: 'int-prom-t' }, 'Prometheus')),
     h('p', { class: 'small muted int-lead' }, 'Metryki w formacie tekstowym Prometheusa - do zbierania w Prometheusie lub VictoriaMetrics i wykresów w Grafanie.'),
     h('div', { class: 'label' }, 'Adres metryk'),
-    h('div', { class: 'int-copy' }, urlCode, life.copyBtn(() => url, () => urlCode, 'Kopiuj', 'Kopiuj adres metryk')),
+    h('div', { class: 'int-copy' }, urlCode, life.copyBtn(() => url, () => urlCode, 'Kopiuj adres metryk')),
     isLocal ? h('p', { class: 'small muted int-gap' }, 'Otwierasz panel lokalnie - jeśli Prometheus działa na innym komputerze, użyj adresu IP Raspberry Pi zamiast localhost.') : null,
     h('div', { class: 'label int-gap' }, 'Fragment prometheus.yml'),
-    h('div', { class: 'int-copy' }, scrapePre, life.copyBtn(() => scrape, () => scrapePre, 'Kopiuj', 'Kopiuj konfigurację Prometheusa')),
+    h('div', { class: 'int-copy' }, scrapePre, life.copyBtn(() => scrape, () => scrapePre, 'Kopiuj konfigurację Prometheusa')),
     features.auth ? h('p', { class: 'small muted' }, 'Panel wymaga logowania (--auth) - wpisz w basic_auth te same dane.') : null,
     h('div', { class: 'int-actions' }, previewBtn, hideBtn,
       h('a', { class: 'btn btn-ghost', href: '/metrics', target: '_blank', rel: 'noopener' }, 'Otwórz /metrics')),
@@ -979,7 +930,7 @@ function restCard(ctx, life) {
           h('td', null, h('span', { class: 'badge plain ' + (m === 'GET' ? 'badge-info' : 'badge-warn') }, m)),
           h('td', { class: 'int-rest-path' }, h('code', null, path), h('div', { class: 'small muted' }, desc)),
           h('td', { class: 'int-rest-cmd' }, h('div', { class: 'int-copy' }, code,
-            life.copyBtn(() => cmd, () => code, 'Kopiuj', `Kopiuj polecenie curl dla ${path}`))));
+            life.copyBtn(() => cmd, () => code, `Kopiuj polecenie curl dla ${path}`))));
       }))));
     const notes = [];
     if (err) notes.push(h('div', { class: 'notice notice-warn' }, `Nie udało się pobrać listy urządzeń (${err.message || err}) - w przykładach zamiast identyfikatora jest <id>.`));

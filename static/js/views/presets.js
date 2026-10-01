@@ -2,8 +2,8 @@
 // Dynamiczny tekst wyłącznie przez h()/textContent (nazwy, etykiety i źródła pochodzą z plików użytkownika).
 
 import {
-  h, mount as fill, get, post, put, del, enc, toast, showError, modal, confirmDialog, download,
-  fmtHex, field, markInvalid, emptyState, pageHeader, store, GROUPS, GROUP_ORDER,
+  h, mount as fill, get, post, put, del, enc, toast, showError, modal, confirmDialog, download, fmtHex, field,
+  markInvalid, emptyState, pageHeader, store, GROUPS, GROUP_ORDER, plural,
 } from '../core.js';
 
 const VALIDATE_MS = 400;
@@ -26,8 +26,8 @@ const TEMPLATE = {
   },
 };
 
-// typ -> liczba rejestrów (jak modbus_dash/codec.py)
-const DATA_TYPES = { int8: 1, uint8: 1, int16: 1, uint16: 1, int32: 2, uint32: 2, float32: 2, int64: 4, uint64: 4, float64: 4 };
+// typy, kolejności bajtów i aliasy jak w modbus_dash/codec.py i presets.py (podgląd normalizuje tak jak serwer)
+const DATA_TYPES = ['int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'float32', 'int64', 'uint64', 'float64'];
 const BYTE_ORDERS = ['ABCD', 'CDAB', 'BADC', 'DCBA'];
 const ORDER_ALIASES = {
   abcd: 'ABCD', big_endian: 'ABCD', big: 'ABCD', be: 'ABCD',
@@ -57,12 +57,6 @@ const ORDER_DESC = {
 const own = (obj, k) => (Object.prototype.hasOwnProperty.call(obj, k) ? obj[k] : undefined);
 const isObj = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
 
-function plural(n, one, few, many) {
-  const n10 = n % 10, n100 = n % 100;
-  if (n === 1) return one;
-  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
-  return many;
-}
 const regWord = (n) => `${n} ${plural(n, 'rejestr', 'rejestry', 'rejestrów')}`;
 const errWord = (n) => `${n} ${plural(n, 'błąd', 'błędy', 'błędów')}`;
 const phasesText = (p) => (p === 1 ? '1 faza' : p === 2 || p === 3 ? `${p} fazy` : '');
@@ -100,7 +94,6 @@ function orderKeys(obj, order) {
 
 /** Postać kanoniczna: pola w kolejności schematu; rejestry wg adresu tylko z sortRegs (przycisk Formatuj). */
 function canonical(p, { sortRegs = false } = {}) {
-  if (!isObj(p)) return p;
   const out = orderKeys(p, TOP_ORDER);
   if (isObj(out.serial)) out.serial = orderKeys(out.serial, ['baudrate', 'bytesize', 'parity', 'stopbits']);
   if (isObj(out.read)) out.read = orderKeys(out.read, ['max_block', 'max_gap']);
@@ -201,7 +194,7 @@ function normOrder(v) {
 function normType(v) {
   if (v == null) return null;
   const k = String(v).trim().toLowerCase();
-  return own(DATA_TYPES, k) ? k : own(TYPE_ALIASES, k) || null;
+  return DATA_TYPES.includes(k) ? k : own(TYPE_ALIASES, k) || null;
 }
 const normFunc = (v) => (v == null ? null : own(FUNC_ALIASES, String(v).trim().toLowerCase()) || null);
 
@@ -230,7 +223,7 @@ function linkify(text) {
     try {
       const u = new URL(url);
       if (u.protocol === 'http:' || u.protocol === 'https:') href = u.href;
-    } catch { href = null; }
+    } catch { /* niepoprawny adres - zostaje zwykłym tekstem */ }
     out.push(s.slice(last, m.index));
     out.push(href ? h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, url) : url);
     last = m.index + url.length;
@@ -286,7 +279,7 @@ function groupBadge(group) {
   return h('span', { class: 'guess g-' + (g ? group : 'other'), title: group }, g ? g.label : group);
 }
 
-// Niezapisana praca z edytora, gdy widok zamknięto bez pytania (np. przycisk Wstecz przeglądarki).
+// Niezapisana praca z edytora, gdy widok odmontowano bez zgody canLeave(); do przywrócenia przy kolejnym wejściu.
 let stash = null;
 
 // ── widok ────────────────────────────────────────────────────
@@ -500,8 +493,7 @@ export function mount(root, ctx) {
     S.sel = { kind: 'loading', id };
     setUrl({ id });
     renderList();
-    ed = null;
-    fill(detail, h('div', { class: 'card' }, h('div', { class: 'status-line' }, h('span', { class: 'spinner' }), 'Wczytywanie presetu...')));
+    renderDetailLoading();
     try {
       const raw = await get(`/api/presets/${enc(id)}`, { signal: myAc.signal });
       if (destroyed || myAc !== detailAc) return;
@@ -552,6 +544,11 @@ export function mount(root, ctx) {
   }
 
   // ── szczegóły ─────────────────────────────────────────────
+  function renderDetailLoading() {
+    ed = null;
+    fill(detail, h('div', { class: 'card' }, h('div', { class: 'status-line' }, h('span', { class: 'spinner' }), 'Wczytywanie presetu...')));
+  }
+
   function renderDetailError(id, e) {
     ed = null;
     const sum = summaryOf(id);
@@ -610,7 +607,6 @@ export function mount(root, ctx) {
   function actionsBar() {
     const sel = S.sel;
     const bar = h('div', { class: 'pr-actions' });
-    ed.actions = bar;
     const use = () => btn('Użyj w urządzeniu', 'btn-ghost', async () => {
       if (!(await confirmDiscard('Preset ma niezapisane zmiany - urządzenie użyje ostatnio zapisanej wersji. Odrzucić zmiany i przejść dalej?'))) return;
       allowNav = true;
@@ -670,7 +666,7 @@ export function mount(root, ctx) {
   }
 
   function updateDirtyUi() {
-    if (!ed) return;
+    if (!ed || !S.sel) return;  // np. widok zamknięty w trakcie operacji
     const dirty = isDirty();
     if (ed.dirtyBadge) ed.dirtyBadge.hidden = !dirty;
     if (ed.saveBtn && !opBusy) ed.saveBtn.disabled = S.sel.kind === 'preset' && !dirty;
@@ -698,6 +694,8 @@ export function mount(root, ctx) {
   // ── podgląd ───────────────────────────────────────────────
   function previewEl() {
     const sel = S.sel;
+    const sum = sel.kind === 'preset' ? summaryOf(sel.id) : null;
+    const fileErrors = sum && sum.valid === false ? sum.errors || [] : [];   // stan zapisanego pliku
     const notes = [];
     let errors = [];
     if (isEditable()) {
@@ -711,20 +709,13 @@ export function mount(root, ctx) {
         notes.push(h('div', { class: 'notice notice-info' }, 'Podgląd uwzględnia niezapisane zmiany z edytora.'));
       }
       if (S.val.state === 'errors') errors = S.val.errors || [];
-      else if (S.val.state === 'idle' && sel.kind === 'preset' && !isDirty()) {
-        const sum = summaryOf(sel.id);
-        if (sum && sum.valid === false) errors = sum.errors || [];
-      }
+      else if (S.val.state === 'idle' && !isDirty()) errors = fileErrors;
     } else {
-      const sum = summaryOf(sel.id);
-      if (sum && sum.valid === false) errors = sum.errors || [];
+      errors = fileErrors;
     }
-    if (sel.kind === 'preset') {
-      const sum = summaryOf(sel.id);
-      if (sum && sum.overrides_builtin) {
-        notes.push(h('div', { class: 'notice notice-info' },
-          'Ten preset przesłania preset wbudowany o tym samym identyfikatorze. Po jego usunięciu znów będzie używana wersja z biblioteki.'));
-      }
+    if (sum && sum.overrides_builtin) {
+      notes.push(h('div', { class: 'notice notice-info' },
+        'Ten preset przesłania preset wbudowany o tym samym identyfikatorze. Po jego usunięciu znów będzie używana wersja z biblioteki.'));
     }
     if (errors.length) {
       notes.push(h('div', { class: 'notice notice-err', role: 'alert' },
@@ -872,7 +863,7 @@ export function mount(root, ctx) {
   /** Wstawia tekst w miejscu zaznaczenia (z zachowaniem historii Ctrl+Z, gdy przeglądarka pozwala). */
   function insertText(ta, text) {
     let ok = false;
-    try { ok = document.execCommand('insertText', false, text); } catch { ok = false; }
+    try { ok = document.execCommand('insertText', false, text); } catch { /* brak execCommand */ }
     if (!ok) {
       ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
       ta.dispatchEvent(new Event('input', { bubbles: true }));
@@ -1274,7 +1265,7 @@ export function mount(root, ctx) {
     }
     if (destroyed) return;
     if (!(await confirmDiscard('Edytor zawiera niezapisane zmiany. Odrzucić je i wczytać plik?'))) return;
-    text = text.replace(/^﻿/, '');
+    text = text.replace(/^\uFEFF/, '');
     const p = parseText(text);
     const good = p.ok && isObj(p.value);
     openDraft(good ? formatPreset(stripMeta(p.value)) : text, 'import', f.name);
@@ -1283,8 +1274,16 @@ export function mount(root, ctx) {
   }
 
   // ── ochrona niezapisanych zmian ───────────────────────────
-  // Linki wewnątrz aplikacji (#widok) przechwytujemy przed nawigacją i pytamy o zgodę.
-  // Wstecz/Dalej przeglądarki nie da się zatrzymać bez routera - wtedy praca trafia do `stash`.
+  // Kliknięcia w linki wewnątrz aplikacji (#widok) przechwytujemy przed zmianą adresu, więc odmowa nie zostawia
+  // wpisu w historii; Wstecz/Dalej przeglądarki zatrzymuje router przez canLeave().
+  async function confirmLeave() {
+    navDialog = true;
+    const ok = await confirmDialog('Edytor presetu zawiera niezapisane zmiany. Odrzucić je i przejść dalej?',
+      { title: 'Niezapisane zmiany', okLabel: 'Odrzuć i przejdź' });
+    navDialog = false;
+    if (ok) allowNav = true;
+    return ok;
+  }
   function onDocClick(e) {
     if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
     const a = e.target instanceof Element ? e.target.closest('a[href]') : null;
@@ -1293,14 +1292,7 @@ export function mount(root, ctx) {
     if (!href.startsWith('#') || href === location.hash || !isDirty()) return;
     e.preventDefault();
     if (navDialog) return;
-    navDialog = true;
-    confirmDialog('Edytor presetu zawiera niezapisane zmiany. Odrzucić je i przejść dalej?',
-      { title: 'Niezapisane zmiany', okLabel: 'Odrzuć i przejdź' }).then((ok) => {
-      navDialog = false;
-      if (!ok || destroyed) return;
-      allowNav = true;
-      location.hash = href;
-    });
+    confirmLeave().then((ok) => { if (ok && !destroyed) location.hash = href; });
   }
   function onBeforeUnload(e) {
     if (!isDirty()) return;
@@ -1369,7 +1361,7 @@ export function mount(root, ctx) {
   } else if (ctx.params.id) {
     const id = ctx.params.id;
     S.sel = { kind: 'loading', id };
-    fill(detail, h('div', { class: 'card' }, h('div', { class: 'status-line' }, h('span', { class: 'spinner' }), 'Wczytywanie presetu...')));
+    renderDetailLoading();
     listReady.then(async () => {
       if (destroyed || !S.sel || S.sel.kind !== 'loading' || S.sel.id !== id) return;
       await selectPreset(id);
@@ -1385,12 +1377,7 @@ export function mount(root, ctx) {
     async canLeave() {
       if (!isDirty() || allowNav) return true;
       if (navDialog) return false;
-      navDialog = true;
-      const ok = await confirmDialog('Edytor presetu zawiera niezapisane zmiany. Odrzucić je i przejść dalej?',
-        { title: 'Niezapisane zmiany', okLabel: 'Odrzuć i przejdź' });
-      navDialog = false;
-      if (ok) allowNav = true;
-      return ok;
+      return confirmLeave();
     },
     unmount() {
       destroyed = true;
