@@ -1,0 +1,32 @@
+{
+  "name": "DZG DVH4013",
+  "manufacturer": "DZG Metering",
+  "model": "DVH4013 (wersja z RS-485 Modbus)",
+  "description": "Licznik 3-fazowy MID do pomiaru dwukierunkowego. Rejestry holding FC03, uint32 big-endian ze skalowaniem; moc czynna tylko sumaryczna (pobór/oddawanie), brak mocy na fazę. Adres Modbus wg mbmd: dwie ostatnie cyfry numeru seryjnego + 1, czytane jako liczba szesnastkowa (np. ...23 -> 0x24 = 36); ustawienia portu niejednoznaczne: instrukcja podaje 9600 8N1, mbmd 9600 8E1.",
+  "phases": 3,
+  "source": "mbmd meters/rs485/dzg.go i README.md (github.com/volkszaehler/mbmd); instrukcja DVH4013 (parametry RS-485): http://www.schellmesstechnik.de/.cm4all/iproc.php/DVH%204013%20Bedienungsanleitung.pdf?cdp=a",
+  "register_type": "holding",
+  "byte_order": "ABCD",
+  "data_type": "uint32",
+  "probe": "voltage_l1",
+  "registers": {
+    "power_import":     {"address": 0, "scale": 0.1, "label": "Moc pobierana", "unit": "W", "group": "total", "decimals": 0},
+    "power_export":     {"address": 2, "scale": 0.1, "label": "Moc oddawana", "unit": "W", "group": "total", "decimals": 0},
+    "voltage_l1":       {"address": 4, "scale": 0.01, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "voltage_l2":       {"address": 6, "scale": 0.01, "label": "Napięcie L2", "unit": "V", "group": "voltage", "decimals": 1},
+    "voltage_l3":       {"address": 8, "scale": 0.01, "label": "Napięcie L3", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":       {"address": 10, "scale": 0.001, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "current_l2":       {"address": 12, "scale": 0.001, "label": "Prąd L2", "unit": "A", "group": "current", "decimals": 2},
+    "current_l3":       {"address": 14, "scale": 0.001, "label": "Prąd L3", "unit": "A", "group": "current", "decimals": 2},
+    "pf_total":         {"address": 16, "scale": 0.001, "label": "cos φ Σ", "unit": "", "group": "pf", "decimals": 3},
+    "frequency":        {"address": 18, "scale": 0.001, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
+    "energy_import":    {"address": 16384, "scale": 0.001, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_import_l1": {"address": 16416, "scale": 0.001, "label": "Energia pobrana L1", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_import_l2": {"address": 16448, "scale": 0.001, "label": "Energia pobrana L2", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_import_l3": {"address": 16480, "scale": 0.001, "label": "Energia pobrana L3", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export":    {"address": 16640, "scale": 0.001, "label": "Energia oddana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export_l1": {"address": 16672, "scale": 0.001, "label": "Energia oddana L1", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export_l2": {"address": 16704, "scale": 0.001, "label": "Energia oddana L2", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export_l3": {"address": 16736, "scale": 0.001, "label": "Energia oddana L3", "unit": "kWh", "group": "energy", "decimals": 2}
+  }
+}

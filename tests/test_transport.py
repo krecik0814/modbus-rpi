@@ -518,7 +518,7 @@ def test_serial_late_response_is_flushed(pty_pair):
     bus = serial_bus(path, timeout=0.2, retries=1)
     try:
         srv.response_delay = 0.35
-        with pytest.raises(ModbusError) as e:
+        with bus.override(retries=0), pytest.raises(ModbusError) as e:
             bus.read_registers(1, "input", 0, 8)
         assert e.value.kind == "timeout"
         srv.response_delay = 0.0

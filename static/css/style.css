@@ -237,3 +237,29 @@ code{background:var(--bg3);padding:1px 6px;border-radius:4px;font-family:var(--m
 .chart-tip{position:absolute;pointer-events:none;background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;font-size:12px;font-family:var(--mono);color:var(--white);white-space:nowrap;z-index:5;transform:translate(-50%,-110%)}
 .chart-tip .t{color:var(--text3);font-size:11px}
 .noscript{padding:40px;text-align:center}
+
+/* ── widok: scanner ── */
+.v-scanner fieldset{border:0;min-width:0}
+.v-scanner .sc-form{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+.v-scanner .sc-form input{width:100%}
+.v-scanner .sc-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px}
+.v-scanner .sc-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.v-scanner .sc-check{display:inline-flex;gap:6px;align-items:center;font-size:12px;color:var(--text2);cursor:pointer}
+.v-scanner .sc-sub{display:block;font-size:10px;color:var(--text3);font-weight:400;letter-spacing:0;text-transform:none;font-family:var(--mono)}
+.v-scanner .sc-gap{margin-bottom:10px}
+.v-scanner .sc-unread{margin:-6px 0 12px;font-family:var(--mono);color:var(--text2);word-break:break-word}
+.v-scanner .sc-table td.raw{white-space:nowrap;color:var(--text2)}
+.v-scanner .sc-table td.num{color:var(--white)}
+.v-scanner .sc-table td.muted{color:var(--text3)}
+.v-scanner .sc-hint{white-space:nowrap}
+.v-scanner .sc-only tr.dim{display:none}
+.v-scanner .sc-bits{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:4px;max-height:560px;overflow:auto}
+.v-scanner .sc-bit{display:flex;justify-content:space-between;gap:6px;padding:4px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;font:12px var(--mono)}
+.v-scanner .sc-bit span{color:var(--cyan)}
+.v-scanner .sc-bit.on b{color:var(--green)}
+.v-scanner .sc-bit.unk b{color:var(--text3)}
+.v-scanner .sc-lower{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:0 16px;align-items:start}
+.v-scanner .sc-progress{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+.v-scanner .sc-unit{cursor:default;flex-wrap:wrap}
+.v-scanner .sc-unit:hover{border-color:var(--border);background:var(--bg3)}
+.v-scanner .sc-unit-actions{display:flex;gap:6px;flex-wrap:wrap}

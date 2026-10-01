@@ -165,6 +165,8 @@ export function mount(root, ctx) {
   let unitCtl = null;        // wyszukiwanie Unit ID
   let writeCtl = null;
   let presetModal = null;
+  let writeBtn = null;       // przycisk i opis celu w karcie zapisu (gdy --allow-write)
+  let writeTarget = null;
 
   // ── karta parametrów ────────────────────────────────────────
   const busSel = h('select', { name: 'bus', disabled: true }, h('option', { value: '' }, 'Ładowanie...'));
@@ -902,8 +904,6 @@ export function mount(root, ctx) {
   }
 
   // ── zapis ───────────────────────────────────────────────────
-  let writeBtn = null;
-  let writeTarget = null;
   function buildWriteCard() {
     const wFunc = select([['holding', 'Holding Register (FC06 / FC16)'], ['coil', 'Coil (FC05)']], prefs.wr.func);
     const wAddr = h('input', { type: 'text', value: prefs.wr.address, autocomplete: 'off', spellcheck: false, placeholder: 'np. 0, 0x10, 40001' });
