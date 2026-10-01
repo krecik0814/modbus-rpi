@@ -30,7 +30,8 @@ def _wait(fn, timeout=8.0, step=0.05):
 def env(tmp_path_factory):
     data = tmp_path_factory.mktemp("data")
     port = _free_port()
-    args = app_module.parse_args(["--data-dir", str(data), "--modbus-port", str(port),
+    presets = tmp_path_factory.mktemp("presets")
+    args = app_module.parse_args(["--data-dir", str(data), "--presets-dir", str(presets), "--modbus-port", str(port),
                                   "--sim-preset", "simulator_3f:2", "--log-level", "WARNING"])
     ctx = app_module.AppContext(args)
     flask_app = create_app(ctx)
@@ -72,7 +73,7 @@ def test_simulator_device_is_polled(env):
     assert devs["symulator"]["locked"] and devs["sym-2"]["unit"] == 2
     hist = _wait(lambda: (lambda h: h if len(h["points"]) >= 2 else None)(
         c.get("/api/devices/symulator/history?seconds=60").get_json()))
-    assert hist and hist["source"] == "memory" and "voltage_l1" in hist["keys"]
+    assert hist and hist["source"] in ("memory", "mixed") and "voltage_l1" in hist["keys"]
     csv = c.get("/api/devices/symulator/history.csv?seconds=60")
     assert csv.status_code == 200 and "Napięcie L1 [V]" in csv.get_data(as_text=True)
 
@@ -219,7 +220,8 @@ def test_settings_roundtrip(env):
 
 
 def test_auth(tmp_path):
-    args = app_module.parse_args(["--data-dir", str(tmp_path), "--no-sim", "--no-history", "--auth", "admin:tajne"])
+    args = app_module.parse_args(["--data-dir", str(tmp_path), "--presets-dir", str(tmp_path / "p"), "--no-sim",
+                                  "--no-history", "--auth", "admin:tajne"])
     ctx = app_module.AppContext(args)
     c = create_app(ctx).test_client()
     try:

@@ -367,16 +367,27 @@ def create_app(ctx):
         seconds = _int(request.args, "seconds", 600, 10, 3650 * 86400)
         keys = [k for k in request.args.get("keys", "").split(",") if k] or None
         source = request.args.get("source", "auto")
+        max_points = _int(request.args, "max_points", 1000, 10, 20000)
         mem = ctx.poller.history(dev_id, seconds, keys)
         mem["source"] = "memory"
         if ctx.history is None or source == "memory":
             return mem
-        if source == "auto":
-            oldest = rt.history[0][0] if rt.history else None
-            if oldest is not None and oldest <= time.time() - seconds + 5:
-                return mem  # bufor w pamięci obejmuje całe okno - pełna rozdzielczość
-        res = ctx.history.query(dev_id, keys or mem["keys"], time.time() - seconds,
-                                max_points=_int(request.args, "max_points", 1000, 10, 20000))
+        now = time.time()
+        since = now - seconds
+        oldest = mem["points"][0][0] if mem["points"] else None
+        if source == "auto" and oldest is not None and oldest <= since + 5:
+            return mem  # bufor w pamięci obejmuje całe okno - pełna rozdzielczość
+        want = keys or mem["keys"]
+        if source == "auto" and oldest is not None and seconds <= 6 * 3600:
+            # starsza część okna z SQLite (agregaty), świeża z pamięci (pełna rozdzielczość)
+            older = ctx.history.query(dev_id, want, since, oldest - 1, max_points=max_points)
+            index = {k: i for i, k in enumerate(older["keys"])}
+            pts = [[p[0]] + [p[1 + index[k]] if k in index else None for k in mem["keys"]]
+                   for p in older["points"] if p[0] < oldest]
+            mem["points"] = pts + mem["points"]
+            mem["source"] = "mixed" if pts else "memory"
+            return mem
+        res = ctx.history.query(dev_id, want, since, max_points=max_points)
         if not res["points"] and mem["points"]:
             return mem
         res["source"] = "db"

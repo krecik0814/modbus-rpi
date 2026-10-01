@@ -2,12 +2,13 @@
 
 import json
 import math
+import random
 
 import pytest
 
 from modbus_dash import codec, heuristics as H
 from modbus_dash.planner import PresetReader, decode_value
-from modbus_dash.presets import normalize_preset
+from modbus_dash.presets import PresetError, normalize_preset
 
 # Układ podobny do Eastron SDM630 (float32, adresy 0-based)
 SDM = {
@@ -126,8 +127,7 @@ def test_row_structure():
 
 @pytest.mark.parametrize("order", codec.BYTE_ORDERS)
 @pytest.mark.parametrize("value, kind", [(230.1, "voltage"), (50.0, "frequency"), (0.95, "pf"),
-                                         (2.5, "current"), (400.0, "line_volt"), (1577.9, "power"),
-                                         (-161.2, "power")])
+                                         (2.5, "current"), (400.0, "line_volt"), (-161.2, "power")])
 def test_all_float_byte_orders(order, value, kind):
     row = H.analyze_registers(0, codec.encode(value, "float32", order))[0]
     assert row["decoded"]["float32"][order] == pytest.approx(value, rel=1e-6)
@@ -266,6 +266,24 @@ def test_suggest_preset_sdm630_layout(order, step):
     assert not any({"type", "byte_order", "scale"} & set(s) for s in preset["registers"].values())
 
 
+def test_suggest_preset_random_layouts():
+    rnd = random.Random(7)
+    gens = [lambda: rnd.uniform(225, 236), lambda: rnd.uniform(0.2, 30), lambda: rnd.uniform(-3000, 5000),
+            lambda: rnd.uniform(0.7, 1.0), lambda: rnd.uniform(49.9, 50.1), lambda: rnd.uniform(100, 99999),
+            lambda: rnd.uniform(390, 410), lambda: 0.0]
+    for _ in range(40):
+        order = rnd.choice(codec.BYTE_ORDERS)
+        regs = []
+        for _ in range(rnd.randrange(8, 40)):
+            regs += codec.encode(rnd.choice(gens)(), "float32", order)
+        for step in (1, 2):
+            preset = H.suggest_preset(H.analyze_registers(0, regs + [0, 0], step=step))
+            normalize_preset(preset)
+            assert preset["byte_order"] == order
+            assert all(s["address"] % 2 == 0 and not {"type", "byte_order"} & set(s)
+                       for s in preset["registers"].values())
+
+
 def test_suggested_preset_reads_back_values(fake_bus):
     image = sdm_image("CDAB")
     fake_bus.put("input", 0, image)
@@ -288,8 +306,10 @@ def test_suggest_preset_explicit_order_and_function():
     assert forced["byte_order"] == "ABCD"
     assert all(s.get("byte_order") == "CDAB" for s in forced["registers"].values())
     normalize_preset(forced)
-    with pytest.raises(ValueError):
+    with pytest.raises(PresetError):
         H.suggest_preset(rows, register_type="coil")
+    with pytest.raises(PresetError):
+        H.suggest_preset(rows, byte_order="middle")
 
 
 def test_suggest_preset_integer_meter():

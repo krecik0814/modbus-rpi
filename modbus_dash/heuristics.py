@@ -14,7 +14,7 @@ import time
 from collections import Counter
 
 from . import codec
-from .presets import normalize_function
+from .presets import PresetError, normalize_function
 from .quantities import QUANTITIES, normalize_unit
 
 # rodzaj -> (etykieta, jednostka, grupa presetu, miejsca po przecinku)
@@ -327,7 +327,7 @@ def _select(items, order, parity, family):
     for j, (a, n, h) in enumerate(items):
         p = bisect.bisect_right(ends, a, 0, j)
         w = (float(h.get("score") or 0) + (1.0 if _same_order(n, h["byte_order"], order) else 0)
-             + (0.5 if n == 1 or a % 2 == parity else 0) + (0.5 if _family(h) == family else 0))
+             + (1.0 if n == 1 or a % 2 == parity else 0) + (0.5 if _family(h) == family else 0))
         take.append(best[p] + w > best[j])
         best.append(max(best[j], best[p] + w))
         prev.append(p)
@@ -450,10 +450,13 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None):
     Klucze kanoniczne (voltage_l1..l3, current_l1..l3, frequency, sumy...) tylko
     przy pewnym wzorcu, pozostałe "<rodzaj>_0x<adres>". Domyślna kolejność bajtów =
     najczęstsza wśród podpowiedzi (albo podana); typ/kolejność/skala w rejestrze
-    tylko gdy różnią się od domyślnych presetu.
+    tylko gdy różnią się od domyślnych presetu. Złe parametry -> PresetError.
     """
-    func = normalize_function(register_type)
-    fixed = codec.normalize_byte_order(byte_order) if byte_order else None
+    try:
+        func = normalize_function(register_type)
+        fixed = codec.normalize_byte_order(byte_order) if byte_order else None
+    except ValueError as e:
+        raise PresetError([str(e)]) from None
     items = []
     for row in rows or ():
         if not isinstance(row, dict) or not isinstance(row.get("hint"), dict):
@@ -468,24 +471,32 @@ def suggest_preset(rows, byte_order=None, register_type="input", name=None):
             continue
         raw = row.get("raw") if isinstance(row.get("raw"), list) else []
         raw = [_reg(v) for v in raw[:2]] + [None] * (2 - len(raw[:2]))
-        items.append([addr, h, raw])
+        items.append([addr, h, [c for c in _candidates(*raw) if _width(c) > 1]])
 
     if fixed:
         order = fixed
     else:
-        # step=1: wartość CDAB pod parzystym adresem wygląda prawie tak samo jak ABCD
-        # "na zakładkę" pod nieparzystym - przy remisie wygrywa wyrównanie parzyste
-        cnt = Counter()
-        for a, h, _ in items:
-            if _width(h) > 1:
-                cnt[h["byte_order"]] += 1.0 if a % 2 == 0 else 0.85
+        # Każdy wiersz głosuje na wszystkie kolejności, w których daje sensowny
+        # float32 (liczby całkowite tylko swoją podpowiedzią). Przy step=1 CDAB
+        # pod parzystym adresem wygląda prawie jak ABCD "na zakładkę" pod
+        # nieparzystym - przy remisie wygrywa wyrównanie parzyste.
+        votes = {"float": Counter(), "int": Counter()}
+        for a, h, wide in items:
+            orders = {c["byte_order"] for c in wide if _family(c) == "float"}
+            if not wide and _width(h) > 1 and _family(h) == "float":
+                orders = {h["byte_order"]}           # wiersz bez surowych danych
+            for o in orders:
+                votes["float"][o] += 1.0 if a % 2 == 0 else 0.85
+            if _width(h) > 1 and _family(h) == "int":
+                votes["int"][h["byte_order"]] += 1
+        cnt = votes["float"] or votes["int"]
         order = max(codec.BYTE_ORDERS, key=lambda o: (cnt[o], -codec.BYTE_ORDERS.index(o))) if cnt else "ABCD"
 
     # podpowiedzi w innej kolejności: spróbuj zdekodować w dominującej
     for it in items:
-        addr, h, raw = it
-        if _width(h) > 1 and h.get("byte_order") != order:
-            alt = next((c for c in _candidates(*raw) if c["byte_order"] == order and _width(c) > 1), None)
+        addr, h, wide = it
+        if _width(h) > 1 and h["byte_order"] != order:
+            alt = next((c for c in wide if c["byte_order"] == order), None)
             if alt:
                 it[1] = alt
 

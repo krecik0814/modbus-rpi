@@ -191,10 +191,12 @@ def detect_preset(job, bus, unit, store, timeout=None):
             "id": summary["id"], "name": summary["name"],
             "manufacturer": summary.get("manufacturer"), "model": summary.get("model"),
             "builtin": summary["builtin"], "score": round(score, 3),
+            "matched": sum(k in DETECT_KEYS for k in sub["registers"]),
             "values": {k: v for k, v in res["values"].items() if v is not None},
         })
     job.progress(len(summaries), len(summaries), "Gotowe")
-    ranked.sort(key=lambda e: -e["score"])
+    # przy remisie wygrywa preset z większą liczbą kluczy kanonicznych, potem wbudowany
+    ranked.sort(key=lambda e: (-e["score"], -e["matched"], not e["builtin"]))
     job.finish({"candidates": ranked[:15]})
 
 

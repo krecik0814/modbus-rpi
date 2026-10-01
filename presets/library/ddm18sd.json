@@ -1,0 +1,22 @@
+{
+  "name": "DDM18SD",
+  "manufacturer": "OEM (różne marki)",
+  "model": "DDM18SD (RS485 Modbus RTU)",
+  "description": "Tani licznik 1-fazowy na szynę DIN z RS485, sprzedawany pod różnymi markami. Rejestry tylko do odczytu FC04, wartości float32 big-endian. Licznik energii pod adresem 256 mbmd opisuje jako energię całkowitą (biblioteka reaper7/SDM jako pobraną), podobnie licznik energii biernej pod adresem 1024.",
+  "phases": 1,
+  "source": "mbmd meters/rs485/ddm18sd.go (github.com/volkszaehler/mbmd); adresy zgodne z SDM.h z github.com/reaper7/SDM_Energy_Meter",
+  "register_type": "input",
+  "byte_order": "ABCD",
+  "data_type": "float32",
+  "probe": "voltage_l1",
+  "registers": {
+    "voltage_l1":            {"address": 0, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":            {"address": 8, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "power_l1":              {"address": 18, "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "reactive_l1":           {"address": 26, "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
+    "pf_l1":                 {"address": 42, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "frequency":             {"address": 54, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
+    "energy_total":          {"address": 256, "label": "Energia całkowita", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_reactive_total": {"address": 1024, "label": "Energia bierna całkowita", "unit": "kvarh", "group": "energy", "decimals": 2}
+  }
+}

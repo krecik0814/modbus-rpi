@@ -122,6 +122,7 @@ w interfejsie oznaczona jako zablokowana). Bez flag magistrale i urządzenia kon
 | `--auth USER:HASŁO` | logowanie HTTP Basic (lub zmienna `MODBUS_DASH_AUTH`) | wyłączone |
 | `--allow-write` | zezwala na zapis rejestrów/cewek ze skanera | wyłączone |
 | `--data-dir` | katalog na `config.json` i `history.sqlite` | `./data` |
+| `--presets-dir` | katalog presetów użytkownika | `./presets` |
 | `--no-history` | bez historii w SQLite | |
 | `--debug` | tryb debug Flask (wymusza nasłuch na 127.0.0.1) | |
 | `--log-level` | `DEBUG` / `INFO` / `WARNING` / `ERROR` | `INFO` |

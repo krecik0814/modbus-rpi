@@ -31,6 +31,7 @@ def parse_args(argv=None):
                    help="włącz logowanie HTTP Basic (lub zmienna MODBUS_DASH_AUTH)")
     g.add_argument("--allow-write", action="store_true", help="zezwól na zapis rejestrów/cewek z interfejsu")
     g.add_argument("--data-dir", default=str(BASE_DIR / "data"), help="katalog na konfigurację i historię")
+    g.add_argument("--presets-dir", default=str(BASE_DIR / "presets"), help="katalog presetów użytkownika")
     g.add_argument("--no-history", action="store_true", help="nie zapisuj historii w SQLite")
     g.add_argument("--debug", action="store_true", help="tryb debug Flask (tylko lokalnie!)")
     g.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
@@ -127,7 +128,7 @@ class AppContext:
             "allow_write": args.allow_write,
             "allow_any_host": True,
         }
-        self.presets = PresetStore(BASE_DIR / "presets", BASE_DIR / "presets" / "library")
+        self.presets = PresetStore(Path(args.presets_dir), BASE_DIR / "presets" / "library")
         defaults = {"buses": {"default": {"name": "Domyślna", "kind": "tcp", "host": "127.0.0.1", "port": 502}}}
         self.config = ConfigStore(self.data_dir / "config.json", defaults, build_overrides(args))
         self.buses = BusManager()
