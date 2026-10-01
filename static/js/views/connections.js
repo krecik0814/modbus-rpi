@@ -19,7 +19,7 @@ const KIND_HELP = {
 };
 const DEFAULTS = {
   name: '', kind: 'rtu', host: '', port: 502, serial_port: '', baudrate: 9600, parity: 'N', stopbits: 1, bytesize: 8,
-  timeout: 1, retries: 1, delay_ms: 0,
+  timeout: 1, retries: 1, delay_ms: 0, local_echo: false,
 };
 
 // ── pomocnicze ───────────────────────────────────────────────
@@ -392,6 +392,7 @@ export function mount(root, ctx) {
     const stopSel = select([['1', '1'], ['2', '2']], String(b.stopbits), { id: uid() });
     const byteSel = select([['8', '8'], ['7', '7']], String(b.bytesize), { id: uid() });
     const serialPreview = h('span', { class: 'mono' });
+    const echoIn = h('input', { type: 'checkbox', id: uid(), checked: !!b.local_echo });
     const timeoutIn = h('input', { type: 'text', id: uid(), inputmode: 'decimal', autocomplete: 'off', value: String(b.timeout).replace('.', ',') });
     const retriesIn = h('input', { type: 'number', id: uid(), min: 0, max: 10, step: 1, inputmode: 'numeric', value: String(b.retries) });
     const delayIn = h('input', { type: 'number', id: uid(), min: 0, max: 5000, step: 1, inputmode: 'numeric', value: String(b.delay_ms) });
@@ -416,7 +417,12 @@ export function mount(root, ctx) {
       field('Parzystość', paritySel),
       field('Bity stopu', stopSel),
       field('Bity danych', byteSel),
-      h('div', { class: 'field span-2 small muted' }, h('span', null, 'Ramka: ', serialPreview)));
+      h('div', { class: 'field span-2 small muted' }, h('span', null, 'Ramka: ', serialPreview)),
+      h('div', { class: 'field span-2' },
+        h('div', { class: 'field inline' }, echoIn,
+          h('label', { for: echoIn.id, style: { textTransform: 'none', fontSize: '13px', color: 'var(--text)', letterSpacing: '0' } },
+            'Adapter z lokalnym echem')),
+        h('span', { class: 'hint' }, 'Zaznacz, gdy przejściówka odsyła własną transmisję (odbiornik włączony na stałe) - objaw: błędy "odpowiedź nie pasuje do zapytania".')));
 
     const isSerial = () => SERIAL_KINDS.has(kindSel.value);
 
@@ -518,6 +524,7 @@ export function mount(root, ctx) {
           timeout,
           retries,
           delay_ms: delay,
+          local_echo: serial ? echoIn.checked : false,
         },
       };
     }

@@ -166,6 +166,7 @@ class TransportConfig:
     timeout: float = 1.0         # s na jedno zapytanie
     retries: int = 1             # dodatkowe próby po timeoucie / błędzie transmisji
     delay_ms: int = 0            # dodatkowa cisza między ramkami
+    local_echo: bool = False     # rtu/ascii: adapter odsyła własną transmisję (RE na stałe włączony)
 
     def __post_init__(self):
         # sprawdzamy tylko pola znaczące dla danego rodzaju łącza
@@ -196,6 +197,8 @@ class TransportConfig:
             raise ValueError(f"liczba ponowień musi być w zakresie 0-{MAX_RETRIES}")
         if not _is_int(self.delay_ms) or not 0 <= self.delay_ms <= MAX_DELAY_MS:
             raise ValueError(f"przerwa między ramkami musi być w zakresie 0-{MAX_DELAY_MS} ms")
+        if not isinstance(self.local_echo, bool):
+            raise ValueError("local_echo musi być wartością logiczną")
 
     @staticmethod
     def from_dict(d):
@@ -225,7 +228,11 @@ class TransportConfig:
             if port not in (None, "") and str(port).strip() != hport:
                 raise ValueError("podaj port w osobnym polu, nie w adresie hosta")
             port = hport
-        out = {"kind": kind, "host": host, "serial_port": str(d.get("serial_port") or "").strip()}
+        echo = d.get("local_echo", False)
+        if isinstance(echo, str):
+            echo = echo.strip().lower() in ("1", "true", "tak", "yes", "on")
+        out = {"kind": kind, "host": host, "serial_port": str(d.get("serial_port") or "").strip(),
+               "local_echo": bool(echo) and not net}
         for name, conv, msg, relevant in (
                 ("port", _as_int, "port TCP musi być liczbą 1-65535", net),
                 ("baudrate", _as_int, "prędkość musi być liczbą całkowitą", not net),
@@ -267,14 +274,16 @@ class TransportConfig:
     def describe(self):
         if self.is_serial:
             mode = "RS-485" if self.kind == "rtu" else "RS-485 ASCII"
-            return f"{mode} {self.serial_port} {self.baudrate} {self.bytesize}{self.parity}{self.stopbits}"
+            echo = " (echo)" if self.local_echo else ""
+            return f"{mode} {self.serial_port} {self.baudrate} {self.bytesize}{self.parity}{self.stopbits}{echo}"
         name = {"tcp": "TCP", "rtu_over_tcp": "RTU over TCP", "udp": "UDP"}[self.kind]
         return f"{name} {self._hostport()}"
 
     def link(self):
         """Parametry, których zmiana wymaga ponownego otwarcia łącza (reszta zmienia się w locie)."""
         if self.is_serial:
-            return (self.kind, self.serial_port, self.baudrate, self.parity, self.stopbits, self.bytesize)
+            return (self.kind, self.serial_port, self.baudrate, self.parity, self.stopbits, self.bytesize,
+                    self.local_echo)
         return (self.kind, self.host, self.port)
 
 
@@ -397,6 +406,78 @@ def _check_response(rr, fc):
         # np. spóźniona odpowiedź na wcześniejsze zapytanie (RTU nie ma numerów transakcji)
         raise _mismatch(f"Błąd transmisji: odpowiedź FC{got:02d} na zapytanie FC{fc:02d}")
     return rr
+
+
+def _mini_uart_problem(port, cfg):
+    """Raspberry Pi 3/4/Zero: mini-UART (ttyS0) po cichu ignoruje parzystość i 2 bity stopu
+    (jądro zeruje PARENB/CSTOPB), więc licznik 8E1 dawałby same timeouty. Zwraca opis albo None."""
+    if cfg.parity == "N" and cfg.stopbits == 1:
+        return None
+    try:
+        real = os.path.realpath(port)
+        with open("/proc/device-tree/model", "rb") as fh:
+            model = fh.read().decode("ascii", "replace")
+    except OSError:
+        return None
+    if real != "/dev/ttyS0" or "Raspberry Pi" not in model:
+        return None
+    return (f"{port} to mini-UART Raspberry Pi (ttyS0), który nie obsługuje parzystości ani 2 bitów stopu - "
+            f"ustawienia {cfg.bytesize}{cfg.parity}{cfg.stopbits} nie zadziałają. Wyłącz Bluetooth "
+            "(dtoverlay=disable-bt w /boot/firmware/config.txt, sudo systemctl disable hciuart, restart) - "
+            "wtedy /dev/serial0 wskaże pełny UART ttyAMA0 - albo przestaw licznik na 8N1.")
+
+
+class _EchoPort:
+    """Port szeregowy adaptera z lokalnym echem: po każdym zapisie odczytuje i odrzuca
+    własną transmisję. Działa jednakowo we wszystkich wersjach pymodbus (handle_local_echo
+    w 3.8 nie działa dla klienta synchronicznego)."""
+
+    def __init__(self, ser, frame_time):
+        object.__setattr__(self, "_ser", ser)
+        object.__setattr__(self, "_frame_time", frame_time)
+        object.__setattr__(self, "_pending", b"")
+
+    def __getattr__(self, name):
+        return getattr(self._ser, name)
+
+    def __setattr__(self, name, value):
+        setattr(self._ser, name, value)
+
+    def write(self, data):
+        n = self._ser.write(data)
+        with contextlib.suppress(Exception):
+            self._ser.flush()
+        data = bytes(data)
+        got = b""
+        deadline = time.monotonic() + self._frame_time()
+        while len(got) < len(data) and time.monotonic() < deadline:
+            chunk = self._ser.read(len(data) - len(got))
+            if chunk:
+                got += chunk
+        if got != data[:len(got)] or len(got) < len(data):
+            # to nie było (pełne) echo - zostawiamy bajty dla klienta
+            object.__setattr__(self, "_pending", self._pending + got)
+        return n
+
+    def read(self, size=1):
+        if self._pending:
+            out, rest = self._pending[:size], self._pending[size:]
+            object.__setattr__(self, "_pending", rest)
+            if len(out) < size:
+                out += self._ser.read(size - len(out))
+            return out
+        return self._ser.read(size)
+
+    @property
+    def in_waiting(self):
+        return len(self._pending) + self._ser.in_waiting
+
+    def reset_input_buffer(self):
+        object.__setattr__(self, "_pending", b"")
+        self._ser.reset_input_buffer()
+
+    def flushInput(self):  # noqa: N802 - API pyserial 2.x
+        self.reset_input_buffer()
 
 
 class Bus:
@@ -764,6 +845,9 @@ class Bus:
             raise _conn_error("brak biblioteki pyserial - pip install pyserial") from None
         if port.startswith("/") and not os.path.exists(port):
             raise _conn_error(f"Port {port} nie istnieje (sprawdź podłączenie adaptera)")
+        problem = _mini_uart_problem(port, c)
+        if problem:
+            raise _conn_error(problem)
         try:
             ser = serial.serial_for_url(port, baudrate=c.baudrate, bytesize=c.bytesize, parity=c.parity,
                                         stopbits=c.stopbits, timeout=timeout, exclusive=True)
@@ -781,7 +865,7 @@ class Bus:
         # bez limitu przerw między bajtami: adaptery USB oddają ramki kawałkami
         with contextlib.suppress(Exception):
             ser.inter_byte_timeout = None
-        return ser
+        return _EchoPort(ser, self._frame_time) if c.local_echo else ser
 
     def _frame_time(self):
         """Czas najdłuższej ramki + zapas na opóźnienia adapterów USB."""

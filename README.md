@@ -133,6 +133,7 @@ w interfejsie oznaczona jako zablokowana). Bez flag magistrale i urządzenia kon
 | `--stopbits` | `1` / `2` | `1` |
 | `--bytesize` | `7` / `8` | `8` |
 | `--framer` | `rtu` / `ascii` (port szeregowy) | `rtu` |
+| `--local-echo` | adapter RS-485 odsyła własną transmisję (lokalne echo) - odrzucaj ją | |
 | `--tcp HOST[:PORT]` | urządzenie lub bramka Modbus TCP | |
 | `--rtu-over-tcp HOST[:PORT]` | bramka w trybie transparentnym (ramki RTU po TCP) | |
 | `--timeout` | czas oczekiwania na odpowiedź [s] | `1.0` |
@@ -368,34 +369,39 @@ sudo raspi-config
 ls -l /dev/serial0
 ```
 
-Używaj **`/dev/serial0`** - to alias na UART wyprowadzony na GPIO14/15 niezależnie od modelu.
-
-- **RPi 3 / 4 / Zero W**: domyślnie pełny UART (PL011, `ttyAMA0`) obsługuje Bluetooth, a `serial0` wskazuje na
-  mini-UART (`ttyS0`), którego prędkość zależy od taktowania rdzenia. Dla stabilnej transmisji dodaj
+- **RPi 3 / 4 / Zero W / Zero 2 W**: pełny UART (PL011, `ttyAMA0`) obsługuje domyślnie Bluetooth, a `serial0`
+  wskazuje na **mini-UART** (`ttyS0`). Mini-UART **nie obsługuje parzystości ani 2 bitów stopu** (jądro po cichu
+  przełącza go na 8N1), a jego prędkość zależy od taktowania procesora. Liczniki 8E1 (np. Orno, Schneider, DZG)
+  na mini-UART dają same timeouty - Modbus Dash wykrywa tę sytuację i zgłasza ją od razu. Rozwiązanie: dopisz
   `dtoverlay=disable-bt` do `/boot/firmware/config.txt` (starsze systemy: `/boot/config.txt`), wykonaj
-  `sudo systemctl disable hciuart` i uruchom ponownie - `serial0` wskaże wtedy `ttyAMA0`.
-- **RPi 5**: UART na GPIO14/15 to `ttyAMA0` (`serial0` po włączeniu w raspi-config); `ttyAMA10` to osobne złącze
-  debug UART.
+  `sudo systemctl disable hciuart` i uruchom ponownie - `serial0` wskaże wtedy pełny UART `ttyAMA0`
+  (`readlink -f /dev/serial0`). Liczniki 8N1 (np. Eastron) działają także na mini-UART.
+- **RPi 5**: nie ma mini-UART. UART na GPIO14/15 to `/dev/ttyAMA0` (włączany przez raspi-config albo
+  `dtparam=uart0=on` w `config.txt`). Alias `serial0` może wskazywać `ttyAMA10` - to osobne złącze debug UART między
+  portami micro-HDMI - dlatego na RPi 5 podawaj wprost `--serial /dev/ttyAMA0`.
 - Uprawnienia: `sudo usermod -a -G dialout $USER` (wyloguj się i zaloguj ponownie).
 
 ### Okablowanie
 
 ```
 Licznik            Nakładka RS-485             Raspberry Pi
-  A (D+) ─────────── A                          
-  B (D-) ─────────── B      transceiver ── UART (GPIO14/15)
-  GND (opc.) ─────── GND
+  A ─────────────── A
+  B ─────────────── B      transceiver ── UART (GPIO14/15)
+  GND/COM ───────── GND   (jeśli licznik ma taki zacisk)
 ```
 
-- **A ↔ A, B ↔ B**. Oznaczenia bywają odwrócone u różnych producentów - jeśli brak odpowiedzi, zamień przewody
-  (nic się nie uszkodzi).
-- Skrętka, na długich odcinkach połącz też GND (masa odniesienia).
+- **A ↔ A, B ↔ B**. Oznaczenia A/B (D+/D-) różnią się u producentów - w specyfikacji Modbus B to linia „+”,
+  wiele nakładek oznacza ją odwrotnie. Jeśli brak odpowiedzi, zamień przewody (nic się nie uszkodzi).
+- Skrętka; specyfikacja Modbus zaleca trzeci przewód wspólnej masy (GND/COM). Wiele liczników (np. Eastron SDM)
+  nie ma takiego zacisku - wtedy wystarczy para A/B, ale przy długich odcinkach i zakłóceniach masa pomaga.
 - **Terminacja 120 Ω** na obu końcach długiej magistrali (wiele nakładek ma zworkę); przy jednym liczniku na kilku
   metrach zwykle niepotrzebna.
-- Do 32 urządzeń (standardowe obciążenie) na magistrali, do 1200 m przy 9600 bit/s. Każdy licznik musi mieć inny
-  Unit ID i te same parametry portu.
+- 32 obciążenia jednostkowe na segment (więcej z transceiverami 1/4 lub 1/8 UL), maks. 247 adresów Modbus;
+  ok. 1000-1200 m przy 9600 bit/s. Każdy licznik musi mieć inny Unit ID i te same parametry portu.
 - Większość nakładek (np. Waveshare RS485 CAN HAT, nakładki z automatycznym sterowaniem kierunkiem) działa bez
   dodatkowej konfiguracji. Nakładki wymagające ręcznego sterowania pinem DE/RE z GPIO nie są obsługiwane.
+  Jeśli przejściówka odsyła własną transmisję (lokalne echo), zaznacz to w ustawieniach połączenia lub użyj
+  `--local-echo`.
 
 ## Bezpieczeństwo
 
@@ -414,7 +420,8 @@ Licznik            Nakładka RS-485             Raspberry Pi
 |-------|-----------|-------------|
 | Brak odpowiedzi (timeout) | zły Unit ID, baudrate lub parzystość | sprawdź menu licznika; **Szukaj urządzeń**; typowo 9600 8N1, Eastron SDM120 2400, Orno często 9600 8E1 |
 | Brak odpowiedzi (timeout) | zamienione A/B, brak zasilania licznika | zamień A z B |
-| Brak odpowiedzi, port otwarty | UART na mini-UART / konsola na porcie | `raspi-config` (login shell: NIE), `dtoverlay=disable-bt` |
+| Brak odpowiedzi, port otwarty | konsola na porcie / mini-UART RPi 3/4 (licznik 8E1) | `raspi-config` (login shell: NIE), `dtoverlay=disable-bt` |
+| Błąd „odpowiedź nie pasuje do zapytania” | adapter z lokalnym echem | zaznacz „Adapter z lokalnym echem” / `--local-echo` |
 | `Permission denied` na porcie | brak uprawnień | `sudo usermod -a -G dialout $USER` |
 | Wyjątek 02 (niedozwolony adres) | rejestr nie istnieje w tym modelu | sprawdź preset / użyj skanera; aplikacja sama dzieli odrzucone bloki |
 | Wyjątek 01 (niedozwolona funkcja) | licznik nie obsługuje FC04 lub FC03 | zmień `register_type` w presecie |

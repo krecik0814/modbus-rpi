@@ -644,3 +644,81 @@ def test_serial_port_errors(tmp_path):
 def test_pymodbus_logger_is_quiet():
     T._pm()
     assert logging.getLogger("pymodbus").getEffectiveLevel() >= logging.WARNING
+
+
+def _echo_rtu_slave(fd, devices, stop):
+    """Slave RTU na pty, który - jak adapter z lokalnym echem - najpierw odsyła zapytanie."""
+    base = S.SerialSimServer(fd)
+    for dev in devices:
+        base.add_device(dev)
+    buf = b""
+    while not stop.is_set():
+        r, _, _ = select.select([fd], [], [], 0.02)
+        if not r:
+            continue
+        try:
+            buf += os.read(fd, 512)
+        except OSError:
+            return
+        while buf:
+            n = S.rtu_request_length(buf)
+            if not n or len(buf) < n:
+                break
+            frame, buf = buf[:n], buf[n:]
+            os.write(fd, frame)              # echo własnej transmisji
+            time.sleep(0.005)
+            resp = base.process_rtu_frame(frame)
+            if resp:
+                os.write(fd, resp)
+
+
+@linux_pty
+def test_serial_local_echo(pty_pair):
+    master, path = pty_pair
+    stop = threading.Event()
+    th = threading.Thread(target=_echo_rtu_slave, args=(master, [make_device(1)], stop), daemon=True)
+    th.start()
+    try:
+        bus = serial_bus(path, timeout=0.3, retries=0, local_echo=True)
+        try:
+            assert bus.read_registers(1, "input", 0, 8) == EXPECTED
+            assert bus.read_registers(1, "input", 2, 2) == EXPECTED[2:4]
+            assert "(echo)" in bus.cfg.describe()
+        finally:
+            bus.close()
+        # bez opcji echo: błąd, nigdy cicha pusta odpowiedź
+        bus = serial_bus(path, timeout=0.3, retries=0)
+        try:
+            with pytest.raises(ModbusError):
+                bus.read_registers(1, "input", 0, 8)
+        finally:
+            bus.close()
+    finally:
+        stop.set()
+        th.join(timeout=2)
+
+
+def test_local_echo_config_parsing():
+    assert TransportConfig.from_dict({"kind": "rtu", "serial_port": "/dev/x", "local_echo": "true"}).local_echo
+    assert not TransportConfig.from_dict({"kind": "tcp", "host": "h", "local_echo": True}).local_echo
+    with pytest.raises(ValueError):
+        TransportConfig(kind="rtu", serial_port="/dev/x", local_echo="tak")
+
+
+def test_mini_uart_parity_is_reported(monkeypatch, tmp_path):
+    import builtins
+    from modbus_dash import transport as T
+    real_open = builtins.open
+
+    def fake_open(path, *a, **kw):
+        if path == "/proc/device-tree/model":
+            from io import BytesIO
+            return BytesIO(b"Raspberry Pi 4 Model B Rev 1.4\0")
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr(builtins, "open", fake_open)
+    monkeypatch.setattr(T.os.path, "realpath", lambda p: "/dev/ttyS0")
+    cfg = TransportConfig(kind="rtu", serial_port="/dev/serial0", parity="E")
+    msg = T._mini_uart_problem("/dev/serial0", cfg)
+    assert msg and "disable-bt" in msg and "8E1" in msg
+    assert T._mini_uart_problem("/dev/serial0", TransportConfig(kind="rtu", serial_port="/dev/serial0")) is None

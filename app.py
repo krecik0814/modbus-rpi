@@ -3,7 +3,7 @@
 
 Uruchomienie:
     python app.py                                   # symulator + dashboard na :5000
-    python app.py --serial /dev/serial0 --baudrate 9600 --parity E
+    python app.py --serial /dev/serial0 --baudrate 9600 --parity E   # RPi 3/4: wymaga dtoverlay=disable-bt
     python app.py --tcp 192.168.1.50:502            # licznik / bramka Modbus TCP
     python app.py --help                            # wszystkie opcje
 """
@@ -43,6 +43,8 @@ def parse_args(argv=None):
     g.add_argument("--stopbits", type=int, default=1, choices=[1, 2])
     g.add_argument("--bytesize", type=int, default=8, choices=[7, 8])
     g.add_argument("--framer", default="rtu", choices=["rtu", "ascii"], help="ramkowanie na porcie szeregowym")
+    g.add_argument("--local-echo", action="store_true",
+                   help="adapter RS-485 odsyła własną transmisję (lokalne echo) - odrzucaj ją")
     g.add_argument("--tcp", metavar="HOST[:PORT]", help="urządzenie / bramka Modbus TCP")
     g.add_argument("--rtu-over-tcp", metavar="HOST[:PORT]",
                    help="bramka w trybie transparentnym (ramki RTU po TCP, np. USR-TCP232, Elfin EW11)")
@@ -86,7 +88,7 @@ def build_overrides(args):
     if args.serial:
         buses["default"] = {"name": "RS-485 (CLI)", "kind": args.framer, "serial_port": args.serial,
                             "baudrate": args.baudrate, "parity": args.parity, "stopbits": args.stopbits,
-                            "bytesize": args.bytesize, **common}
+                            "bytesize": args.bytesize, "local_echo": args.local_echo, **common}
     elif args.tcp or args.rtu_over_tcp:
         host, port = _host_port(args.tcp or args.rtu_over_tcp)
         buses["default"] = {"name": "TCP (CLI)", "kind": "tcp" if args.tcp else "rtu_over_tcp",

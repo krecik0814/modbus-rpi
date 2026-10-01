@@ -68,8 +68,9 @@ ls -l /dev/serial0        # sprawdź, na który port wskazuje alias</pre>
   <li><b><code>/dev/serial0</code></b> to alias na UART pinów GPIO, niezależny od modelu - używaj go w
     <code>--serial</code> i w zakładce Połączenia.</li>
   <li><b>RPi 3, 4, Zero W, Zero 2 W:</b> pełny UART (PL011, <code>/dev/ttyAMA0</code>) obsługuje domyślnie Bluetooth,
-    a <code>serial0</code> wskazuje na mini-UART (<code>/dev/ttyS0</code>), którego prędkość zależy od taktowania
-    procesora - to częsta przyczyna błędów transmisji. Dopisz do <code>/boot/firmware/config.txt</code>
+    a <code>serial0</code> wskazuje na mini-UART (<code>/dev/ttyS0</code>). <b>Mini-UART nie obsługuje parzystości
+    ani 2 bitów stopu</b> (jądro po cichu przełącza go na 8N1), więc liczniki 8E1 (np. Orno) nie odpowiedzą - aplikacja
+    wykrywa to i zgłasza od razu. Jego prędkość zależy też od taktowania procesora. Dopisz do <code>/boot/firmware/config.txt</code>
     (w systemach starszych niż Bookworm: <code>/boot/config.txt</code>):
     <pre class="code">dtoverlay=disable-bt</pre>
     wykonaj <code>sudo systemctl disable hciuart</code> i uruchom ponownie. Bluetooth zostanie wyłączony,
@@ -309,6 +310,7 @@ const CLI_ROWS = [
   ['--stopbits', '1', 'bity stopu: 1 albo 2'],
   ['--bytesize', '8', 'bity danych: 7 albo 8'],
   ['--framer', 'rtu', 'ramkowanie na porcie szeregowym: rtu albo ascii'],
+  ['--local-echo', 'wyłączone', 'adapter RS-485 odsyła własną transmisję (lokalne echo) - odrzucaj ją'],
   ['--tcp HOST[:PORT]', 'brak', 'licznik albo bramka Modbus TCP (port domyślnie 502)'],
   ['--rtu-over-tcp HOST[:PORT]', 'brak', 'bramka transparentna (ramki RTU po TCP), np. USR-TCP232, Elfin EW11'],
   ['--timeout', '1.0', 'timeout odpowiedzi [s]'],
