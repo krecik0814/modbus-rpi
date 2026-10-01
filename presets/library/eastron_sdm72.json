@@ -1,0 +1,17 @@
+{
+  "name": "Eastron SDM72 (v1)",
+  "manufacturer": "Eastron",
+  "model": "SDM72D-M (pierwsza wersja)",
+  "description": "Licznik 3-fazowy pierwszej generacji z minimalnym zestawem danych: moc całkowita i energie, bez napięć i prądów. Rejestry tylko do odczytu FC04, wartości float32 big-endian; bez napięcia automatyczne rozpoznanie jest mało wiarygodne. Dla SDM72D-M-2 użyj presetu Eastron SDM72 v2.",
+  "phases": 3,
+  "source": "mbmd meters/rs485/sdm72.go (github.com/volkszaehler/mbmd)",
+  "register_type": "input",
+  "byte_order": "ABCD",
+  "data_type": "float32",
+  "registers": {
+    "power_total":   {"address": 52, "label": "Moc czynna Σ", "unit": "W", "group": "total", "decimals": 0},
+    "energy_import": {"address": 72, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export": {"address": 74, "label": "Energia oddana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_total":  {"address": 342, "label": "Energia całkowita", "unit": "kWh", "group": "energy", "decimals": 2}
+  }
+}

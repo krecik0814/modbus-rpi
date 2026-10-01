@@ -1,0 +1,28 @@
+{
+  "name": "Eastron SDM220 / SDM230",
+  "manufacturer": "Eastron",
+  "model": "SDM220-Modbus / SDM230-Modbus",
+  "description": "Liczniki 1-fazowe (2 moduły) z pomiarem dwukierunkowym i kątem fazowym; oba modele mają tę samą mapę rejestrów. Rejestry tylko do odczytu FC04, wartości float32 big-endian.",
+  "phases": 1,
+  "source": "mbmd meters/rs485/sdm220.go i sdm230.go (github.com/volkszaehler/mbmd)",
+  "register_type": "input",
+  "byte_order": "ABCD",
+  "data_type": "float32",
+  "probe": "voltage_l1",
+  "registers": {
+    "voltage_l1":             {"address": 0, "label": "Napięcie L1", "unit": "V", "group": "voltage", "decimals": 1},
+    "current_l1":             {"address": 6, "label": "Prąd L1", "unit": "A", "group": "current", "decimals": 2},
+    "power_l1":               {"address": 12, "label": "Moc czynna L1", "unit": "W", "group": "power", "decimals": 0},
+    "apparent_l1":            {"address": 18, "label": "Moc pozorna L1", "unit": "VA", "group": "power", "decimals": 0},
+    "reactive_l1":            {"address": 24, "label": "Moc bierna L1", "unit": "var", "group": "power", "decimals": 0},
+    "pf_l1":                  {"address": 30, "label": "cos φ L1", "unit": "", "group": "pf", "decimals": 3},
+    "phase_angle_l1":         {"address": 36, "label": "Kąt fazowy L1", "unit": "°", "group": "system", "decimals": 1},
+    "frequency":              {"address": 70, "label": "Częstotliwość", "unit": "Hz", "group": "system", "decimals": 2},
+    "energy_import":          {"address": 72, "label": "Energia pobrana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_export":          {"address": 74, "label": "Energia oddana", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_reactive_import": {"address": 76, "label": "Energia bierna pobrana", "unit": "kvarh", "group": "energy", "decimals": 2},
+    "energy_reactive_export": {"address": 78, "label": "Energia bierna oddana", "unit": "kvarh", "group": "energy", "decimals": 2},
+    "energy_total":           {"address": 342, "label": "Energia całkowita", "unit": "kWh", "group": "energy", "decimals": 2},
+    "energy_reactive_total":  {"address": 344, "label": "Energia bierna całkowita", "unit": "kvarh", "group": "energy", "decimals": 2}
+  }
+}

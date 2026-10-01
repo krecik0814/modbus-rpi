@@ -1,0 +1,22 @@
+# Jednostka systemd dla Modbus Dash.
+# Instalacja: sudo cp deploy/modbus-dash.service /etc/systemd/system/
+#             (popraw User, WorkingDirectory i ExecStart), potem:
+#             sudo systemctl daemon-reload && sudo systemctl enable --now modbus-dash
+[Unit]
+Description=Modbus Dash - monitoring liczników energii
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=dialout
+WorkingDirectory=/home/pi/modbus-rpi
+ExecStart=/home/pi/modbus-rpi/.venv/bin/python app.py --serial /dev/serial0 --baudrate 9600
+Restart=on-failure
+RestartSec=5
+# Hasło do dashboardu (opcjonalnie): Environment=MODBUS_DASH_AUTH=admin:zmien-mnie
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
